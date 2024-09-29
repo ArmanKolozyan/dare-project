@@ -15,8 +15,8 @@ def sign_msg(signing_key, message):
     64 bytes are the signature, and the rest is the JSON-encoded message.
     """
     public_key = signing_key.verify_key.encode()
-    signed_msg = signing_key.sign(json.dumps(message).encode('utf-8'))
-    return public_key + signed_msg
+    signed_msg = signing_key.sign(json.dumps(message).encode('utf-8')) # json encoding
+    return public_key + signed_msg # GEEFT GEWOON DE PUBLIC KEY MEE ZO, NICE
 
 def verify_msg(signed_msg):
     """
@@ -26,12 +26,14 @@ def verify_msg(signed_msg):
     exception if the signature is not valid.
     """
     public_key = VerifyKey(signed_msg[0:32]) # first 32 bytes are pubkey
-    verified = json.loads(public_key.verify(signed_msg[32:]))
-    return {**verified, 'signed_by': signed_msg[0:32].hex()}
+    verified = json.loads(public_key.verify(signed_msg[32:])) # json decoding
+    return {**verified, 'signed_by': signed_msg[0:32].hex()} 
+    # ^ **verified refers to a dictionary unpacking operation that 
+    # incorporates the key-value pairs from the verified dictionary into the new dictionary being returned
 
 def create_op(signing_key):
     """Returns a group creation operation signed by ``signing_key``."""
-    return sign_msg(signing_key, {'type': 'create', 'nonce': secrets.token_hex(16)})
+    return sign_msg(signing_key, {'type': 'create', 'nonce': secrets.token_hex(16)}) # so that every group is unique
 
 def add_op(signing_key, added_key, preds):
     """Returns an operation signed by ``signing_key``, which adds ``added_key`` to the group.
@@ -43,6 +45,13 @@ def remove_op(signing_key, removed_key, preds):
     ``preds`` is a list of hashes of immediate predecessor operations."""
     return sign_msg(signing_key, {'type': 'remove', 'removed_key': removed_key, 'preds': preds})
 
+# ADDED FOR EXERCISE 2
+def post_op(signing_key, message, preds):
+    """Returns a signed application message (chat post) by ``signing_key``.
+    ``message`` is the content of the chat message, and ``preds`` is a list of hashes of immediate predecessor operations.
+    """
+    return sign_msg(signing_key, {'type': 'post', 'message': message, 'preds': preds})
+
 def transitive_succs(successors, hash):
     """
     Takes ``successors``, a dictionary from operation hashes to sets of successor hashes, and a
@@ -53,37 +62,69 @@ def transitive_succs(successors, hash):
         result.update(transitive_succs(successors, succ))
     return result
 
+# ADDED FOR EXERCISE 2
+def transitive_preds(predecessors, hash):
+    """
+    Takes `predecessors`, a dictionary from operation hashes to sets of predecessor hashes,
+    and a `hash` to start from. Returns a set of all hashes that are predecessors of the starting point.
+    """
+    result = {hash}
+    for pred in predecessors.get(hash, []):
+        result.update(transitive_preds(predecessors, pred))
+    return result
+
 def interpret_ops(ops):
     """
-    Takes a set of access control operations and computes the currently authorised set of users.
-    Throws an exception if something isn't right.
+    Takes a set of access control and application operations and computes the currently authorised set of users # UPDATED FOR EXERCISE 2
+    and valid messages. Throws an exception if something is not right.
     """
+    
     # Check all the signatures and parse all the JSON
+    # creates a dictionary ops_by_hash, where the keys are the 
+    # hashes of each operation, and the values are the verified 
+    # operation data returned from verify_msg()
     ops_by_hash = {hex_hash(op): verify_msg(op) for op in ops}
+    # list of the verified and parsed operations
     parsed_ops = ops_by_hash.values()
 
+    ## SCHEMA VALIDATION
     # Every op must be one of the expected types
-    if any(op['type'] not in {'create', 'add', 'remove'} for op in parsed_ops):
-        raise Exception('Every op must be either create, add, or remove')
+    if any(op['type'] not in {'create', 'add', 'remove', 'post'} for op in parsed_ops): # UPDATED FOR EXERCISE 2
+        raise Exception('Every op must be either create, add, remove, or post')
+    
     if any('added_key' not in op for op in parsed_ops if op['type'] == 'add'):
         raise Exception('Every add operation must have an added_key')
+    
     if any('removed_key' not in op for op in parsed_ops if op['type'] == 'remove'):
         raise Exception('Every remove operation must have a removed_key')
+    
+    # ADDED FOR EXERCISE 2
+    if any('message' not in op for op in parsed_ops if op['type'] == 'post'):
+        raise Exception('Every post operation must have a message')
+    
 
     # Hash graph integrity: every op except the initial creation must reference at least one
     # predecessor operation, and all predecessors must exist in the set
     if any(len(op['preds']) == 0 for op in parsed_ops if op['type'] != 'create'):
         raise Exception('Every non-create op must have at least one predecessor')
-    if any(pred not in ops_by_hash
+    if any(pred not in ops_by_hash # no dangling predecessors
            for op in parsed_ops if op['type'] != 'create'
            for pred in op['preds']):
         raise Exception('Every hash must resolve to another op in the set')
 
-    # Get the set of successor hashes for each op
+    # the set of successor hashes for each op 
     successors = {}
+    
+    # ADDED FOR EXERCISE 2
+    # the set of predecessor hashes (in a dictionary) for each op
+    predecessors = {}
+    
+    # filling in successors and predecessors
     for hash, op in ops_by_hash.items():
         for pred in op.get('preds', []):
             successors[pred] = successors.get(pred, set()) | {hash}
+            predecessors[hash] = predecessors.get(hash, set()) | {pred} # ADDED FOR EXERCISE 2
+
 
     # Get the public key of the group creator
     create_ops = [(hash, op) for hash, op in ops_by_hash.items() if op['type'] == 'create']
@@ -92,20 +133,37 @@ def interpret_ops(ops):
     create_hash, create_op = create_ops[0]
 
     # Only the group creator may sign add/remove ops (TODO: change this!)
-    if any(op['signed_by'] != create_op['signed_by'] for op in parsed_ops):
+    if any(op['signed_by'] != create_op['signed_by'] for op in parsed_ops if op['type'] != 'post'):
         raise Exception('Only the group creator may sign add/remove operations')
 
     # Current group members are those who have been added, and not removed again by a remove
     # operation that is a transitive successor to the add operation.
     members = set()
     for hash, op in ops_by_hash.items():
-        if op['type'] in {'create', 'add'}:
+        if op['type'] in {'create', 'add'}: # removal needs to be somewhere later (DAAROM DIE REVERSE NODIG!!)
             added_key = op['signed_by'] if op['type'] == 'create' else op['added_key']
             succs = [ops_by_hash[succ] for succ in transitive_succs(successors, hash)]
             if not any(succ['type'] == 'remove' and succ['removed_key'] == added_key
                        for succ in succs):
                 members.add(added_key)
-    return members
+       
+    # ADDED FOR EXERCISE 2
+    # If a user is removed, only the messages they posted while they were a member remain valid. 
+    # Any messages they post after they are removed or concurrently with their removal, are discarded. 
+    # We do this by signing application messages and making them a part of the hash graph, exactly like access control operations.            
+    messages = set()
+    for hash, op in ops_by_hash.items():            
+        if op['type'] == 'post':
+            signed_by = op['signed_by']
+            preds = op['preds']
+
+            # getting all predecessors of the post operation
+            pred_ops = [ops_by_hash[pred] for pred in transitive_preds(predecessors, hash)]
+
+            # checking if any predecessor is a 'remove' operation for the author
+            if not any(pred['type'] == 'remove' and pred['removed_key'] == signed_by for pred in pred_ops):
+                messages.add(op['message'])
+    return (members, messages)
 
 
 class TestAccessControlList(unittest.TestCase):
@@ -117,14 +175,69 @@ class TestAccessControlList(unittest.TestCase):
     def test_add_remove(self):
         # Make some example ops
         create = create_op(self.private['alice'])
-        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
-        add_c = add_op(self.private['alice'], self.public['carol'], [hex_hash(create)])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)]) # = [hex_hash(create)] => add happens after the create operation
+        add_c = add_op(self.private['alice'], self.public['carol'], [hex_hash(create)]) # vorige ook create als vorige, dus parallel!
         rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b), hex_hash(add_c)])
 
         # Compute group membership
-        members = interpret_ops({create, add_b, add_c, rem_b})
+        members, _ = interpret_ops({create, add_b, add_c, rem_b})
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'carol'})
+    
+    # ADDED FOR EXERCISE 2
+    def test_valid_post_before_removal(self):
+        """Test that a post made before removal remains valid"""
+        # creating group and adding Bob
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        
+        # Bob posts a valid message
+        post_by_bob = post_op(self.private['bob'], "Hello, I am Bob", [hex_hash(add_b)])
 
+        # Alice removes Bob after the post
+        rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+
+        # computing group membership and valid posts
+        members, valid_messages = interpret_ops({create, add_b, post_by_bob, rem_b})
+
+        # Bob should not be a member anymore, but his post should be valid
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
+        self.assertEqual(valid_messages, {"Hello, I am Bob"})  # Bob's post should still be valid
+
+    # ADDED FOR EXERCISE 2
+    def test_invalid_post_after_removal(self):
+        """Test that a post made after removal is invalid"""
+        
+        # creating group and adding Bob
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+
+        # Alice removes Bob
+        rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+
+        # Bob tries to post after being removed
+        post_by_bob_after_removal = post_op(self.private['bob'], "Hello, I am still here", [hex_hash(rem_b)])
+
+        # computing group membership and valid posts
+        members, valid_messages = interpret_ops({create, add_b, rem_b, post_by_bob_after_removal})
+
+        # Bob should not be a member, and his post after removal should be ignored
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
+        self.assertEqual(valid_messages, set())  # no valid posts since Bob was removed
+        
+    
+    def test_failure_1(self):
+        with self.assertRaises(Exception):
+            # adding without creating
+            create = create_op(self.private['alice'])
+            add_b = add_op(self.private['alice'], self.public('bob'), [])
+    
+    def test_failure_2(self):
+        with self.assertRaises(Exception):
+            # adding with wrong key
+            create = create_op(self.private['alice'])
+            add_b = add_op(self.private['arman'], self.public['bob'], [hex_hash(create)])      
+                   
+                   
 
 if __name__ == '__main__':
     unittest.main()
