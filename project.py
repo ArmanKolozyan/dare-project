@@ -162,8 +162,8 @@ def interpret_ops(ops):
     create_hash, create_op = create_ops[0]
 
     # Only the group creator may sign add/remove ops (TODO: change this!)
-    if any(op['signed_by'] != create_op['signed_by'] for op in parsed_ops if op['type'] != 'post'):
-        raise Exception('Only the group creator may sign add/remove operations')
+    # if any(op['signed_by'] != create_op['signed_by'] for op in parsed_ops if op['type'] != 'post'):
+    #    raise Exception('Only the group creator may sign add/remove operations')
 
     # Current group members are those who have been added, and not removed again by a remove
     # operation that is a transitive successor to the add operation.
