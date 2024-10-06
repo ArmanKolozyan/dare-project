@@ -197,12 +197,31 @@ def interpret_ops(ops):
     for hash, op in ops_by_hash.items():            
         if op['type'] == 'post':
             signed_by = op['signed_by']
-
+            
             # getting all predecessors of the post operation
-            pred_ops = [ops_by_hash[pred] for pred in transitive_preds(predecessors, hash)]
+            preds_by_hash = {pred : ops_by_hash[pred] for pred in transitive_preds(predecessors, hash)}
+            
+            # finding all remove operations for the author among the predecessors
+            removals = [h for h, pred in preds_by_hash.items() if pred['type'] == 'remove' and pred['removed_key'] == signed_by]
+        
+            
+            # flag to indicate if any removal of a user is followed by an add of that same user
+            no_add_after_remove = False
+            
+            # checking each removal to see if it is followed by an 'add' operation for the same key
+            for removal_hash in removals:
+                
+                # getting the successors of the removal operation
+                rem_succ_ops = [ops_by_hash[succ] for succ in transitive_succs(successors, removal_hash)]
+                
+                # if no 'add' operation exists in the successors, we mark no_add_after_remove as True
+                if not any(rem_succ['type'] == 'add' and rem_succ['added_key'] == signed_by for rem_succ in rem_succ_ops):
+                    
+                    
+                    no_add_after_remove = True
 
-            # checking if any predecessor is a 'remove' operation for the author
-            if not any(pred['type'] == 'remove' and pred['removed_key'] == signed_by for pred in pred_ops):
+            # if no removal (without a subsequent add) was found, we add the message to the valid messages
+            if not no_add_after_remove:
                 messages.add(op['message'])
     return (members, messages)
 
