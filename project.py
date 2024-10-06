@@ -74,6 +74,7 @@ def transitive_preds(predecessors, hash):
     return result
 
 ## ADDED TO MAKE THE MEMBERSHIP DETERMINATION CODE COMPLETE!
+## NOW WE ALSO CHECK WHETHER THE ADDED USER OR THE ADDING USER IS CONCURRENTLY REMOVED!
 def concurrent_removal(op, successors, ops_by_hash):
     """
     Checks if there is a concurrent 'remove' operation for the same added_key # TODO: check met jolien of mijn logica juist is
@@ -85,6 +86,7 @@ def concurrent_removal(op, successors, ops_by_hash):
     - ops_by_hash: A dictionary where keys are operation hashes values are the corresponding operation data.
     """
     added_key = op['added_key']
+    signed_by = op['signed_by']
     preds = op['preds']
     
     # finding all immediate successor operations of each predecessor
@@ -93,13 +95,19 @@ def concurrent_removal(op, successors, ops_by_hash):
         if pred in successors: # should always return true, but put here just in case
             immediate_succ.extend(ops_by_hash[succ_hash] for succ_hash in successors[pred])
 
-    # checking if any of the immediate successors is a 'remove' operation for the same added_key
-    concurrent_removals = any(
+    # 1. checking if any of the immediate successors is a 'remove' operation for the same added_key
+    concurrent_user_removals = any(
         other_op['type'] == 'remove' and other_op['removed_key'] == added_key
         for other_op in immediate_succ
     )
     
-    return concurrent_removals
+    # 2. checking if any of the immediate successors is a 'remove' operation for the same signing key
+    concurrent_adder_removals = any(
+        other_op['type'] == 'remove' and other_op['removed_key'] == signed_by
+        for other_op in immediate_succ
+    )
+    
+    return (concurrent_user_removals or concurrent_adder_removals)  
     
 
 def interpret_ops(ops):
@@ -175,7 +183,9 @@ def interpret_ops(ops):
             # checking for future remove operations
             if not any(succ['type'] == 'remove' and succ['removed_key'] == added_key
                        for succ in succs):
-                # ADDED: adding the member only if there is no concurrent removal operation
+                # ADDED: adding the member only if there is no concurrent removal operation of:
+                # 1. the user
+                # 2. the adder (the person that added this user)
                 if not (op['type'] == 'add' and concurrent_removal(op, successors, ops_by_hash)):
                     members.add(added_key)
        
@@ -215,8 +225,8 @@ class TestAccessControlList(unittest.TestCase):
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'carol'})
         
     
-    ## ADDED FOR CONCURRENT REMOVAL CHECK
-    def test_concurrent_remove(self):
+    ## ADDED FOR CONCURRENT REMOVAL CHECK OF THE USER
+    def test_concurrent_remove_user(self):
         create = create_op(self.private['alice'])
         add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
         # adding Carol
@@ -227,6 +237,20 @@ class TestAccessControlList(unittest.TestCase):
         # checking if Carol is not a member
         members, _ = interpret_ops({create, add_b, add_c, remove_c})
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob'})
+        
+    
+    ## ADDED FOR CONCURRENT REMOVAL CHECK OF THE ADDER (i.e., the person that added this user)
+    def test_concurrent_remove_adder(self):
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        # Bob adds Carol
+        add_c = add_op(self.private['bob'], self.public['carol'], [hex_hash(add_b)])
+        # concurrently removing Bob (who added Carol)
+        remove_c = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+        
+        # checking if Carol is not a member
+        members, _ = interpret_ops({create, add_b, add_c, remove_c})
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})    
             
     
     # ADDED FOR EXERCISE 2
