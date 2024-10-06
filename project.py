@@ -206,22 +206,24 @@ def interpret_ops(ops):
         
             
             # flag to indicate if any removal of a user is followed by an add of that same user
-            no_add_after_remove = False
+            removal_without_add = False
             
             # checking each removal to see if it is followed by an 'add' operation for the same key
             for removal_hash in removals:
                 
                 # getting the successors of the removal operation
-                rem_succ_ops = [ops_by_hash[succ] for succ in transitive_succs(successors, removal_hash)]
+                rem_succ_ops = {succ : ops_by_hash[succ] for succ in transitive_succs(successors, removal_hash)}
                 
-                # if no 'add' operation exists in the successors, we mark no_add_after_remove as True
-                if not any(rem_succ['type'] == 'add' and rem_succ['added_key'] == signed_by for rem_succ in rem_succ_ops):
+                # if no 'add' operation exists in the successors, we mark removal_without_add as True
+                if not any(rem_succ['type'] == 'add' 
+                           and rem_succ['added_key'] == signed_by 
+                           and hash in transitive_succs(successors, rem_succ_hash)  # the post must be a successor of the add!
+                           for rem_succ_hash, rem_succ in rem_succ_ops.items()):
                     
-                    
-                    no_add_after_remove = True
+                    removal_without_add = True
 
             # if no removal (without a subsequent add) was found, we add the message to the valid messages
-            if not no_add_after_remove:
+            if not removal_without_add:
                 messages.add(op['message'])
     return (members, messages)
 
@@ -313,6 +315,7 @@ class TestAccessControlList(unittest.TestCase):
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
         self.assertEqual(valid_messages, set())  # no valid posts since Bob was removed
         
+                 
     
     def test_failure_1(self):
         with self.assertRaises(Exception):
