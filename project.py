@@ -73,6 +73,35 @@ def transitive_preds(predecessors, hash):
         result.update(transitive_preds(predecessors, pred))
     return result
 
+## ADDED TO MAKE THE MEMBERSHIP DETERMINATION CODE COMPLETE!
+def concurrent_removal(op, successors, ops_by_hash):
+    """
+    Checks if there is a concurrent 'remove' operation for the same added_key # TODO: check met jolien of mijn logica juist is
+    that shares at least one predecessor with the given 'add' operation.
+    
+    Parameters:
+    - op: The 'add' operation we are checking for concurrent removal.
+    - successors: A dictionary where keys are operation hashes and values are sets of successor operations.
+    - ops_by_hash: A dictionary where keys are operation hashes values are the corresponding operation data.
+    """
+    added_key = op['added_key']
+    preds = op['preds']
+    
+    # finding all immediate successor operations of each predecessor
+    immediate_succ = []
+    for pred in preds:
+        if pred in successors: # should always return true, but put here just in case
+            immediate_succ.extend(ops_by_hash[succ_hash] for succ_hash in successors[pred])
+
+    # checking if any of the immediate successors is a 'remove' operation for the same added_key
+    concurrent_removals = any(
+        other_op['type'] == 'remove' and other_op['removed_key'] == added_key
+        for other_op in immediate_succ
+    )
+    
+    return concurrent_removals
+    
+
 def interpret_ops(ops):
     """
     Takes a set of access control and application operations and computes the currently authorised set of users # UPDATED FOR EXERCISE 2
@@ -143,9 +172,12 @@ def interpret_ops(ops):
         if op['type'] in {'create', 'add'}: # removal needs to be somewhere later (DAAROM DIE REVERSE NODIG!!)
             added_key = op['signed_by'] if op['type'] == 'create' else op['added_key']
             succs = [ops_by_hash[succ] for succ in transitive_succs(successors, hash)]
+            # checking for future remove operations
             if not any(succ['type'] == 'remove' and succ['removed_key'] == added_key
                        for succ in succs):
-                members.add(added_key)
+                # ADDED: adding the member only if there is no concurrent removal operation
+                if not (op['type'] == 'add' and concurrent_removal(op, successors, ops_by_hash)):
+                    members.add(added_key)
        
     # ADDED FOR EXERCISE 2
     # If a user is removed, only the messages they posted while they were a member remain valid. 
@@ -155,7 +187,6 @@ def interpret_ops(ops):
     for hash, op in ops_by_hash.items():            
         if op['type'] == 'post':
             signed_by = op['signed_by']
-            preds = op['preds']
 
             # getting all predecessors of the post operation
             pred_ops = [ops_by_hash[pred] for pred in transitive_preds(predecessors, hash)]
@@ -182,6 +213,21 @@ class TestAccessControlList(unittest.TestCase):
         # Compute group membership
         members, _ = interpret_ops({create, add_b, add_c, rem_b})
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'carol'})
+        
+    
+    ## ADDED FOR CONCURRENT REMOVAL CHECK
+    def test_concurrent_remove(self):
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        # adding Carol
+        add_c = add_op(self.private['alice'], self.public['carol'], [hex_hash(add_b)])
+        # concurrently removing Carol
+        remove_c = remove_op(self.private['alice'], self.public['carol'], [hex_hash(add_b)])
+        
+        # checking if Carol is not a member
+        members, _ = interpret_ops({create, add_b, add_c, remove_c})
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob'})
+            
     
     # ADDED FOR EXERCISE 2
     def test_valid_post_before_removal(self):
