@@ -248,6 +248,7 @@ class TestAccessControlList(unittest.TestCase):
     
     ## ADDED FOR CONCURRENT REMOVAL CHECK OF THE USER
     def test_concurrent_remove_user(self):
+        """Test that adding a user concurrently with the removal of the user is invalid."""
         create = create_op(self.private['alice'])
         add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
         # adding Carol
@@ -262,6 +263,7 @@ class TestAccessControlList(unittest.TestCase):
     
     ## ADDED FOR CONCURRENT REMOVAL CHECK OF THE ADDER (i.e., the person that added this user)
     def test_concurrent_remove_adder(self):
+        """Test that adding a user concurrently with the removal of the person performing the add operation is invalid."""
         create = create_op(self.private['alice'])
         add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
         # Bob adds Carol
@@ -315,7 +317,54 @@ class TestAccessControlList(unittest.TestCase):
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
         self.assertEqual(valid_messages, set())  # no valid posts since Bob was removed
         
-                 
+    # ADDED FOR EXERCISE 2
+    def test_valid_post_after_removal_and_readding(self):
+        """Test that a post made after removal, and after re-adding BEFORE the message, is valid"""
+        
+        # creating group and adding Bob
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+
+        # Alice removes Bob
+        rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+        
+        # Alice adds Bob again
+        add_b_2 = add_op(self.private['alice'], self.public['bob'], [hex_hash(rem_b)])
+
+        # Bob posts message
+        post_by_bob = post_op(self.private['bob'], "Hello, I am still here", [hex_hash(add_b_2)])
+
+        # computing group membership and valid posts
+        members, valid_messages = interpret_ops({create, add_b, rem_b, add_b_2, post_by_bob})
+
+        # Bob should not be a member, and his post after removal should be ignored
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob'})
+        self.assertEqual(valid_messages, {"Hello, I am still here"})  # the post is still valid
+        
+    # ADDED FOR EXERCISE 2
+    def test_invalid_post_after_removal_and_before_readding(self):
+        """Test that a post made after removal, and after re-adding AFTER the message, is invalid"""
+        
+        # creating group and adding Bob
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+
+        # Alice removes Bob
+        rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+
+        # Bob posts message
+        post_by_bob = post_op(self.private['bob'], "Hello, I am still here", [hex_hash(rem_b)])
+        
+        # Alice adds Bob again
+        add_b_2 = add_op(self.private['alice'], self.public['bob'], [hex_hash(post_by_bob)])
+
+        # computing group membership and valid posts
+        members, valid_messages = interpret_ops({create, add_b, rem_b, add_b_2, post_by_bob})
+
+        # Bob should not be a member, and his post after removal should be ignored
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob'})
+        self.assertEqual(valid_messages, set())  # the post is invalid    
+            
     
     def test_failure_1(self):
         with self.assertRaises(Exception):
