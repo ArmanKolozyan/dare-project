@@ -221,6 +221,7 @@ def interpret_ops(ops):
                            for rem_succ_hash, rem_succ in rem_succ_ops.items()):
                     
                     removal_without_add = True
+                    break  # no need to continue checking once we have found a valid removal without a subsequent add
 
             # if no removal (without a subsequent add) was found, we add the message to the valid messages
             if not removal_without_add:
