@@ -73,6 +73,43 @@ def transitive_preds(predecessors, hash):
         result.update(transitive_preds(predecessors, pred))
     return result
 
+## ADDED TO MAKE THE MEMBERSHIP DETERMINATION CODE COMPLETE!
+## NOW WE ALSO CHECK WHETHER THE ADDED USER OR THE ADDING USER IS CONCURRENTLY REMOVED!
+def concurrent_removal(op, successors, ops_by_hash):
+    """
+    Checks if there is a concurrent 'remove' operation for the same added_key # TODO: check met jolien of mijn logica juist is
+    that shares at least one predecessor with the given 'add' operation.
+    
+    Parameters:
+    - op: The 'add' operation we are checking for concurrent removal.
+    - successors: A dictionary where keys are operation hashes and values are sets of successor operations.
+    - ops_by_hash: A dictionary where keys are operation hashes values are the corresponding operation data.
+    """
+    added_key = op['added_key']
+    signed_by = op['signed_by']
+    preds = op['preds']
+    
+    # finding all immediate successor operations of each predecessor
+    immediate_succ = []
+    for pred in preds:
+        if pred in successors: # should always return true, but put here just in case
+            immediate_succ.extend(ops_by_hash[succ_hash] for succ_hash in successors[pred])
+
+    # 1. checking if any of the immediate successors is a 'remove' operation for the same added_key
+    concurrent_user_removals = any(
+        other_op['type'] == 'remove' and other_op['removed_key'] == added_key
+        for other_op in immediate_succ
+    )
+    
+    # 2. checking if any of the immediate successors is a 'remove' operation for the same signing key
+    concurrent_adder_removals = any(
+        other_op['type'] == 'remove' and other_op['removed_key'] == signed_by
+        for other_op in immediate_succ
+    )
+    
+    return (concurrent_user_removals or concurrent_adder_removals)  
+    
+
 def interpret_ops(ops):
     """
     Takes a set of access control and application operations and computes the currently authorised set of users # UPDATED FOR EXERCISE 2
@@ -86,6 +123,9 @@ def interpret_ops(ops):
     ops_by_hash = {hex_hash(op): verify_msg(op) for op in ops}
     # list of the verified and parsed operations
     parsed_ops = ops_by_hash.values()
+    
+    ## ADDED FOR EXERCISE 3: KEEPING A DICTIONARY OF KEY -> POWER LEVEL
+    power_levels = {}
 
     ## SCHEMA VALIDATION
     # Every op must be one of the expected types
@@ -133,8 +173,8 @@ def interpret_ops(ops):
     create_hash, create_op = create_ops[0]
 
     # Only the group creator may sign add/remove ops (TODO: change this!)
-    if any(op['signed_by'] != create_op['signed_by'] for op in parsed_ops if op['type'] != 'post'):
-        raise Exception('Only the group creator may sign add/remove operations')
+    # if any(op['signed_by'] != create_op['signed_by'] for op in parsed_ops if op['type'] != 'post'):
+    #    raise Exception('Only the group creator may sign add/remove operations')
 
     # Current group members are those who have been added, and not removed again by a remove
     # operation that is a transitive successor to the add operation.
@@ -143,9 +183,17 @@ def interpret_ops(ops):
         if op['type'] in {'create', 'add'}: # removal needs to be somewhere later (DAAROM DIE REVERSE NODIG!!)
             added_key = op['signed_by'] if op['type'] == 'create' else op['added_key']
             succs = [ops_by_hash[succ] for succ in transitive_succs(successors, hash)]
+            # checking for future remove operations
             if not any(succ['type'] == 'remove' and succ['removed_key'] == added_key
                        for succ in succs):
-                members.add(added_key)
+                # ADDED: adding the member only if there is no concurrent removal operation of:
+                # 1. the user
+                # 2. the adder (the person that added this user)
+                if not (op['type'] == 'add' and concurrent_removal(op, successors, ops_by_hash)):
+                    
+                    ## ADDED FOR EXERCISE 3: INITIALIZING POWER LEVELS
+                    power_levels[added_key] = 100 if op['type'] == 'create' else 0
+                    members.add(added_key)
        
     # ADDED FOR EXERCISE 2
     # If a user is removed, only the messages they posted while they were a member remain valid. 
@@ -155,13 +203,34 @@ def interpret_ops(ops):
     for hash, op in ops_by_hash.items():            
         if op['type'] == 'post':
             signed_by = op['signed_by']
-            preds = op['preds']
-
+            
             # getting all predecessors of the post operation
-            pred_ops = [ops_by_hash[pred] for pred in transitive_preds(predecessors, hash)]
+            preds_by_hash = {pred : ops_by_hash[pred] for pred in transitive_preds(predecessors, hash)}
+            
+            # finding all remove operations for the author among the predecessors
+            removals = [h for h, pred in preds_by_hash.items() if pred['type'] == 'remove' and pred['removed_key'] == signed_by]
+        
+            
+            # flag to indicate if any removal of a user is followed by an add of that same user
+            removal_without_add = False
+            
+            # checking each removal to see if it is followed by an 'add' operation for the same key
+            for removal_hash in removals:
+                
+                # getting the successors of the removal operation
+                rem_succ_ops = {succ : ops_by_hash[succ] for succ in transitive_succs(successors, removal_hash)}
+                
+                # if no 'add' operation exists in the successors, we mark removal_without_add as True
+                if not any(rem_succ['type'] == 'add' 
+                           and rem_succ['added_key'] == signed_by 
+                           and hash in transitive_succs(successors, rem_succ_hash)  # the post must be a successor of the add!
+                           for rem_succ_hash, rem_succ in rem_succ_ops.items()):
+                    
+                    removal_without_add = True
+                    break  # no need to continue checking once we have found a valid removal without a subsequent add
 
-            # checking if any predecessor is a 'remove' operation for the author
-            if not any(pred['type'] == 'remove' and pred['removed_key'] == signed_by for pred in pred_ops):
+            # if no removal (without a subsequent add) was found, we add the message to the valid messages
+            if not removal_without_add:
                 messages.add(op['message'])
     return (members, messages)
 
@@ -182,6 +251,37 @@ class TestAccessControlList(unittest.TestCase):
         # Compute group membership
         members, _ = interpret_ops({create, add_b, add_c, rem_b})
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'carol'})
+        
+    
+    ## ADDED FOR CONCURRENT REMOVAL CHECK OF THE USER
+    def test_concurrent_remove_user(self):
+        """Test that adding a user concurrently with the removal of the user is invalid."""
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        # adding Carol
+        add_c = add_op(self.private['alice'], self.public['carol'], [hex_hash(add_b)])
+        # concurrently removing Carol
+        remove_c = remove_op(self.private['alice'], self.public['carol'], [hex_hash(add_b)])
+        
+        # checking if Carol is not a member
+        members, _ = interpret_ops({create, add_b, add_c, remove_c})
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob'})
+        
+    
+    ## ADDED FOR CONCURRENT REMOVAL CHECK OF THE ADDER (i.e., the person that added this user)
+    def test_concurrent_remove_adder(self):
+        """Test that adding a user concurrently with the removal of the person performing the add operation is invalid."""
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        # Bob adds Carol
+        add_c = add_op(self.private['bob'], self.public['carol'], [hex_hash(add_b)])
+        # concurrently removing Bob (who added Carol)
+        remove_c = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+        
+        # checking if Carol is not a member
+        members, _ = interpret_ops({create, add_b, add_c, remove_c})
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})    
+            
     
     # ADDED FOR EXERCISE 2
     def test_valid_post_before_removal(self):
@@ -224,6 +324,54 @@ class TestAccessControlList(unittest.TestCase):
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
         self.assertEqual(valid_messages, set())  # no valid posts since Bob was removed
         
+    # ADDED FOR EXERCISE 2
+    def test_valid_post_after_removal_and_readding(self):
+        """Test that a post made after removal, and after re-adding BEFORE the message, is valid"""
+        
+        # creating group and adding Bob
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+
+        # Alice removes Bob
+        rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+        
+        # Alice adds Bob again
+        add_b_2 = add_op(self.private['alice'], self.public['bob'], [hex_hash(rem_b)])
+
+        # Bob posts message
+        post_by_bob = post_op(self.private['bob'], "Hello, I am still here", [hex_hash(add_b_2)])
+
+        # computing group membership and valid posts
+        members, valid_messages = interpret_ops({create, add_b, rem_b, add_b_2, post_by_bob})
+
+        # Bob should not be a member, and his post after removal should be ignored
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob'})
+        self.assertEqual(valid_messages, {"Hello, I am still here"})  # the post is still valid
+        
+    # ADDED FOR EXERCISE 2
+    def test_invalid_post_after_removal_and_before_readding(self):
+        """Test that a post made after removal, and after re-adding AFTER the message, is invalid"""
+        
+        # creating group and adding Bob
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+
+        # Alice removes Bob
+        rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+
+        # Bob posts message
+        post_by_bob = post_op(self.private['bob'], "Hello, I am still here", [hex_hash(rem_b)])
+        
+        # Alice adds Bob again
+        add_b_2 = add_op(self.private['alice'], self.public['bob'], [hex_hash(post_by_bob)])
+
+        # computing group membership and valid posts
+        members, valid_messages = interpret_ops({create, add_b, rem_b, add_b_2, post_by_bob})
+
+        # Bob should not be a member, and his post after removal should be ignored
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob'})
+        self.assertEqual(valid_messages, set())  # the post is invalid    
+            
     
     def test_failure_1(self):
         with self.assertRaises(Exception):
