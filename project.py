@@ -123,6 +123,9 @@ def interpret_ops(ops):
     ops_by_hash = {hex_hash(op): verify_msg(op) for op in ops}
     # list of the verified and parsed operations
     parsed_ops = ops_by_hash.values()
+    
+    ## ADDED FOR EXERCISE 3: KEEPING A DICTIONARY OF KEY -> POWER LEVEL
+    power_levels = {}
 
     ## SCHEMA VALIDATION
     # Every op must be one of the expected types
@@ -187,6 +190,9 @@ def interpret_ops(ops):
                 # 1. the user
                 # 2. the adder (the person that added this user)
                 if not (op['type'] == 'add' and concurrent_removal(op, successors, ops_by_hash)):
+                    
+                    ## ADDED FOR EXERCISE 3: INITIALIZING POWER LEVELS
+                    power_levels[added_key] = 100 if op['type'] == 'create' else 0
                     members.add(added_key)
        
     # ADDED FOR EXERCISE 2
