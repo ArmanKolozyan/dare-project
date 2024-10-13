@@ -44,15 +44,15 @@ def remove_op(signing_key, removed_key, preds):
     ``preds`` is a list of hashes of immediate predecessor operations."""
     return sign_msg(signing_key, {'type': 'remove', 'removed_key': removed_key, 'preds': preds})
 
-def transitive_succs(successors, hash):
-    """
-    Takes ``successors``, a dictionary from operation hashes to sets of successor hashes, and a
-    ``hash`` to start from. Returns a set of all hashes that are reachable from that starting point.
-    """
-    result = {hash}
-    for succ in successors.get(hash, []):
-        result.update(transitive_succs(successors, succ))
-    return result
+#def transitive_succs(successors, hash):
+ #   """
+  #  Takes ``successors``, a dictionary from operation hashes to sets of successor hashes, and a
+ #   ``hash`` to start from. Returns a set of all hashes that are reachable from that starting point.
+  #  """
+   # result = {hash}
+  #  for succ in successors.get(hash, []):
+ #       result.update(transitive_succs(successors, succ))
+  #  return result
 
 def interpret_ops(ops):
     """
@@ -62,8 +62,16 @@ def interpret_ops(ops):
     # Check all the signatures and parse all the JSON
     ops_by_hash = {hex_hash(op): verify_msg(op) for op in ops}
     parsed_ops = ops_by_hash.values()
-    print("ops by hash")
-    print(ops_by_hash)
+
+    print("test")
+    print(set([1,2,3]))
+    print([1,2,3])
+    print([0,1,2,3,4,5,6,7,8,9][3:])
+    if []:
+        print("true")
+    else:
+        print("false")
+
     # Every op must be one of the expected types
     if any(op['type'] not in {'create', 'add', 'remove'} for op in parsed_ops):
         raise Exception('Every op must be either create, add, or remove')
@@ -82,10 +90,10 @@ def interpret_ops(ops):
         raise Exception('Every hash must resolve to another op in the set')
 
     # Get the set of successor hashes for each op
-    successors = {}
-    for hash, op in ops_by_hash.items():
-        for pred in op.get('preds', []):
-            successors[pred] = successors.get(pred, set()) | {hash}
+ #   successors = {}
+  #  for hash, op in ops_by_hash.items():
+   #     for pred in op.get('preds', []):
+    #        successors[pred] = successors.get(pred, set()) | {hash}
 
     # Get the public key of the group creator
     create_ops = [(hash, op) for hash, op in ops_by_hash.items() if op['type'] == 'create']
@@ -94,20 +102,39 @@ def interpret_ops(ops):
     create_hash, create_op = create_ops[0]
 
     # Only the group creator may sign add/remove ops (TODO: change this!)
-    if any(op['signed_by'] != create_op['signed_by'] for op in parsed_ops):
-        raise Exception('Only the group creator may sign add/remove operations')
+  #  if any(op['signed_by'] != create_op['signed_by'] for op in parsed_ops):
+   #     raise Exception('Only the group creator may sign add/remove operations')
 
     # Current group members are those who have been added, and not removed again by a remove
     # operation that is a transitive successor to the add operation.
-    members = set()
-    for hash, op in ops_by_hash.items():
-        if op['type'] in {'create', 'add'}:
-            added_key = op['signed_by'] if op['type'] == 'create' else op['added_key']
-            succs = [ops_by_hash[succ] for succ in transitive_succs(successors, hash)]
-            if not any(succ['type'] == 'remove' and succ['removed_key'] == added_key
-                       for succ in succs):
-                members.add(added_key)
-    return members
+  #  members = set()
+   # for hash, op in ops_by_hash.items():
+    #    if op['type'] in {'create', 'add'}:
+     #       added_key = op['signed_by'] if op['type'] == 'create' else op['added_key']
+      #      succs = [ops_by_hash[succ] for succ in transitive_succs(successors, hash)]
+       #     if not any(succ['type'] == 'remove' and succ['removed_key'] == added_key
+        #               for succ in succs):
+         #       members.add(added_key)
+    return compute_membership(parsed_ops)
+
+
+def compute_membership(ops): 
+    seniority = compute_seniority(ops) # of the form {pk : depth(add_op_of_pk), hash(add_op_of_pk)}
+    auth_graph = authority_graph(ops) # of the form {(add/create_or_rem_op_of_pk, (member, pk)) or (op1, op2)}
+    # member_nodes filters out the (op1, op2) - only the ones of the form (add/create_or_rem_op_of_pk, (member, pk)) 
+    member_nodes = {member_pk for _, member_pk in auth_graph if isinstance(member_pk, tuple) and member_pk[0] == 'member'}
+    # * means unpacking the arguments
+    cycles = set.union(*[find_cycles(auth_graph, node, []) for node in member_nodes]) # of the form { { op1, op2, ... , op1, ...} .. }
+    # By default max will compare the items by the first index. If the first index is the same then it'll compare the second index - https://stackoverflow.com/questions/18296755/python-max-function-using-key-and-lambda-expression
+    # and op as third argument just as a trick to still keep the op
+    # the (member, pk) vertices do not have outgoing edges - by definition
+    drop = { max([(seniority[subject(op)], hex_hash(op), op) for op in cycle])
+                for cycle in cycles } # of the form (hash(add_op_of_pk_signing), hash(op), op)
+    # the n1,n2 where neither the n1 nor the n2 are in drop (but drop is a 3-tuple, so we need to filter and see it is empty)
+    auth_graph2 = { (n1, n2) for n1, n2 in auth_graph if not filter(lambda tuple: tuple[2] == n1, drop) and not filter(lambda tuple: tuple[2] == n2, drop)}
+    # compute_validity for each (member, pk)
+    valid = {compute_validity(ops, auth_graph2, node, valid) for node in member_nodes}
+    return { pk for member, pk in member_nodes if valid[member, pk]}
 
 def subject(op):
     # you return the public key from the device that *does* the action
@@ -115,59 +142,42 @@ def subject(op):
         return op['signed_by']
 
 def compute_seniority(ops) :
-    # Check all the signatures and parse all the JSON
-    ops_by_hash = {hex_hash(op): verify_msg(op) for op in ops}
-    parsed_ops = ops_by_hash.values()
-
-    # Every op must be one of the expected types
-    if any(op['type'] not in {'create', 'add', 'remove'} for op in parsed_ops):
-        raise Exception('Every op must be either create, add, or remove')
-    if any('added_key' not in op for op in parsed_ops if op['type'] == 'add'):
-        raise Exception('Every add operation must have an added_key')
-    if any('removed_key' not in op for op in parsed_ops if op['type'] == 'remove'):
-        raise Exception('Every remove operation must have a removed_key')
-
-    # Hash graph integrity: every op except the initial creation must reference at least one
-    # predecessor operation, and all predecessors must exist in the set
-    if any(len(op['preds']) == 0 for op in parsed_ops if op['type'] != 'create'):
-        raise Exception('Every non-create op must have at least one predecessor')
-    if any(pred not in ops_by_hash
-           for op in parsed_ops if op['type'] != 'create'
-           for pred in op['preds']):
-        raise Exception('Every hash must resolve to another op in the set')
-
+    ops_by_hash = {hex_hash(op): op for op in ops}
     # Get the set of successor hashes for each op
     successors = {}
     for hash, op in ops_by_hash.items():
         for pred in op.get('preds', []):
             successors[pred] = successors.get(pred, set()) | {hash}
-    
+
     # operations without causal successor 
+    # aka the most recent operation
     heads = [op for op, succ in successors.items() if succ == {}]
     added, depth = {}, {}
     for head in heads:
         added, depth = check_graph(ops_by_hash, head, added, depth)
+        
     # return mapping from public key to seniority (depth, hash) 
-    return { pk: (depth[op], hex_hash(op)) for pk, op in added}
+    # depth is the longest path in the hash DAG, hash is only used as a tiebreaker
+    # aka for that pk, find all "add operations" and pick the min - min automatically first checks the first element of the tuple afterwards the second one as a tiebreaker
+    return { pk: min([(depth[op], hex_hash(op)) for pk2, op in added if pk2 == pk]) for pk, _ in added}
 
 def check_graph(ops_by_hash, op, added, depth):
     if op in depth:
         return added, depth
     # depth and added are empty, operation type is create
-    # in pseudocode need to still verify, but has been done before in our code 
     elif not depth and not added & op['type'] == 'create' :
         return { (op['signed_by'] , op)}, {op : 0} # op['signed_by'] is the public key of the device 
-    # operation type is add or remove, it has predecessors
-    # in pseudocode need to still verify and check if it is in the graph, but has been done before in our code 
+    # operation type is add or remove and it has predecessors
     elif op['type'] in {'add', 'remove'} and op['preds']:
         maxDepth = 0
-        for depHash in op['preds']:
-            depOp = ops_by_hash[depHash]
-            added, depth = check_graph(ops_by_hash, depOp, added, depth)
-            maxDepth = max [maxDepth, depth[depOp]]
-            # there does not exist an operation that came before that added the key that signs this operation:
+        for predecessor_hash in op['preds']:
+            predecessor_op = ops_by_hash[predecessor_hash]
+            added, depth = check_graph(ops_by_hash, predecessor_op, added, depth)
+            maxDepth = max [maxDepth, depth[predecessor_op]]
+        # there does not exist an operation that came before that added the key that signs this operation:
         if not any([added_key == op['signed_by'] and precedes(ops_by_hash, add_op, op) for added_key, add_op in added]):
-            Exception("signing key was not yet added to the graph")
+            Exception("Signing key was not yet added to the graph - check_graph")
+        # if this is an "add" operation, add it to the "added":
         if op['type'] == 'add':
             added.add((op['added_key'], op))
         return (added, depth.update({op : maxDepth + 1}))
@@ -177,7 +187,7 @@ def check_graph(ops_by_hash, op, added, depth):
 
 def authority_graph(ops):
     """
-    INPUT ops represent a hash DAG
+    INPUT ops representing a hash DAG
     OUTPUT the set of edges of the authority graph
     -> edge from op1 to op2 if op1 may affect whether op2 is authorised
     this means adding additional edges 
@@ -190,39 +200,37 @@ def authority_graph(ops):
     ### (not) precedes op1, depending on op1
     authority_graph = set()
     for op1 in ops:
-        p_k = None
         # get the correct p_k
+        p_k = None
         op1_type = op1['type']
         if op1_type == 'create':
             p_k = op1['signed_by']; # for a created op, you want the creator
         elif op1_type == 'add':
-            p_k = op1['added_key'] # for an add op, you want the one that is added
+            p_k = op1['added_key'] # for an add op, you want the p_k that is added
         elif op1_type == 'remove':
             p_k = op1['removed_key'] # for a remove op, you want the p_k of the removed device
 
-        # add the operation to the graph
+        # add an edge between every operation that may affect the permissions associated with the device that has p_k
         authority_graph.add((op1, ('member', p_k)))  
 
-        # check for dependencies and add those to the graph
+        # check for dependencies and add those as extra edges to the graph
         for op2 in ops:
-            if op2['signed_by'] == p_k: # for the operations done by the device with p_k
-                if precedes(ops, op1, op2) and (op1_type == 'create' or op1_type == 'add'):
-                    authority_graph.add((op1, op2))
-                elif op1_type == 'remove' and not precedes(ops, op2, op1):
+            if op2['signed_by'] == p_k: # the operations done by the device with p_k
+                if precedes(ops, op1, op2) and (op1_type == 'create' or op1_type == 'add') or (op1_type == 'remove' and not precedes(ops, op2, op1)) :
                     authority_graph.add((op1, op2))
     return authority_graph
     
 
-def find_cycles(authority_graph, op, path):
-    if op in path:
-        # return a set of all operations that come after the op in path
-        return set(path[path.index(op):])
-    # TODO dit returned een {a, b, c}, kijken of het {{a}, {b}, {c}} moet zijn 
-    # kijken wat het returned voor de preds / wat nodig
+def find_cycles(authority_graph, node, path):
+    # node can be (member, pk) or op
+    if node in path:
+        # return a set with a set of all operations that come after the node in path
+        return {set(path[path.index(node):])}
     else:
-        preds = { op1 for op1, op2 in authority_graph if op2 == op} # all operations that causally precede op2
-        return set.union(*[find_cycles(authority_graph, n, path.append(op)) for n in preds]) # * means unpacking a list into arguments
-    # TODO in de pseudocode staan de laatste 2 args van find_cycles omgekeerd maar ik denk zo
+        preds = { op1 for op1, op2 in authority_graph if op2 == node} # all operations that causally precede the node 
+        # return a set with sets of loops
+        return set.union(*[find_cycles(authority_graph, n, path.append(node)) for n in preds]) # * means unpacking a list into arguments
+
 
 def compute_validity(ops, authority_graph, op, valid):
     if op in valid:
@@ -232,45 +240,29 @@ def compute_validity(ops, authority_graph, op, valid):
         return valid
     else:
         # compute validity for every operation from which there is an incoming edge into op
+        op_prevs = []
         for prev, op2 in authority_graph:
             if op2 == op:
                 valid = compute_validity(ops, authority_graph, prev, valid)
-        ops_incoming_edge_in_current_op = {prev for prev, op in authority_graph if valid[prev]}
+                op_prevs += [prev] # predecessor of op
+        ops_incoming_edge_in_current_op = {prev for prev in op_prevs if valid[prev]}
         tmp_bool = False
         # there exists at least one add/create operation
         ## that is not overridden by a remove operation 
+        # in the incoming edges 
         for add_op in ops_incoming_edge_in_current_op:
             def filter_function(rem_op):
                 rem_op['type'] == 'remove' and precedes(ops, add_op, rem_op)
                 # filter the remove operations that succeed the addop, if none -> you found it!
-            if add_op['type'] in ['add', 'create'] and len(filter(filter_function, ops_incoming_edge_in_current_op)) <= 0:
+            if add_op['type'] in ['add', 'create'] and not filter(filter_function, ops_incoming_edge_in_current_op) :
                 tmp_bool = True
                 break
         valid.update({op : tmp_bool})
         return valid
 
-# dit is eigenlijk de nieuwe interpret_ops
-def compute_membership(ops): 
-    # todo kijken of ik niet deel van compute seniority naar hier kan brengen zoals in interpret ops 
-    seniority = compute_seniority(ops)
-    auth_graph = authority_graph(ops)
-    # authority graph has (op1, op2) or (op, (member, p_k))
-    # member_nodes filters out the (op1, op2)
-    member_nodes = {member_pk for op, member_pk in auth_graph if isinstance(member_pk, tuple) and member_pk[0] == 'member'}
-    cycles = {find_cycles(auth_graph, node, []) for node in member_nodes}
-    # By default max will compare the items by the first index. If the first index is the same then it'll compare the second index - https://stackoverflow.com/questions/18296755/python-max-function-using-key-and-lambda-expression
-    # and op as third argument just as a trick to still keep the op
-    drop = { max([(seniority[subject(op)], hex_hash(op), op) for op in cycle])
-                for cycle in cycles}
-    # todo kijken hoe drop eruit ziet van vorm want ! voor authgraph2
-    auth_graph2 = { (n1, n2) for n1, n2 in auth_graph if not (n1 in drop) and not (n2 in drop)}
-    # todo die ops[pk] vervangen want denk dat dat fout is, ik moet de op van de pk krijgen volgens mij 
-    # todo kijken of ik niet dan gwn membernodes de (op, mem , pk) hou
-    valid = {compute_validity(ops, auth_graph2, ops[pk], valid) for member, pk in member_nodes}
-    return { pk for member, pk in member_nodes if valid[member, pk]}
 
 def precedes(ops_by_hash, op1, op2):
-    hex_hash(op1) in op2['preds'] or any([precedes(ops_by_hash, op1, ops_by_hash[d]) for d in op2['preds']])
+    hex_hash(op1) in op2['preds'] or any([precedes(ops_by_hash, op1, ops_by_hash[predecessor]) for predecessor in op2['preds']])
 
 class TestAccessControlList(unittest.TestCase):
     # Generate keys for all the participants
