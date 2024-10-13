@@ -119,6 +119,23 @@ def compute_seniority(ops) :
     ops_by_hash = {hex_hash(op): verify_msg(op) for op in ops}
     parsed_ops = ops_by_hash.values()
 
+    # Every op must be one of the expected types
+    if any(op['type'] not in {'create', 'add', 'remove'} for op in parsed_ops):
+        raise Exception('Every op must be either create, add, or remove')
+    if any('added_key' not in op for op in parsed_ops if op['type'] == 'add'):
+        raise Exception('Every add operation must have an added_key')
+    if any('removed_key' not in op for op in parsed_ops if op['type'] == 'remove'):
+        raise Exception('Every remove operation must have a removed_key')
+
+    # Hash graph integrity: every op except the initial creation must reference at least one
+    # predecessor operation, and all predecessors must exist in the set
+    if any(len(op['preds']) == 0 for op in parsed_ops if op['type'] != 'create'):
+        raise Exception('Every non-create op must have at least one predecessor')
+    if any(pred not in ops_by_hash
+           for op in parsed_ops if op['type'] != 'create'
+           for pred in op['preds']):
+        raise Exception('Every hash must resolve to another op in the set')
+
     # Get the set of successor hashes for each op
     successors = {}
     for hash, op in ops_by_hash.items():
@@ -137,19 +154,22 @@ def check_graph(ops_by_hash, op, added, depth):
     if op in depth:
         return added, depth
     # depth and added are empty, operation type is create
-    elif not depth and not added & op['type'] == 'create' and "TODO NOG KIJKEN HOE IK DE VERIFY MOET DOEN" :
+    # in pseudocode need to still verify, but has been done before in our code 
+    elif not depth and not added & op['type'] == 'create' :
         return { (op['signed_by'] , op)}, {op : 0} # op['signed_by'] is the public key of the device 
     # operation type is add or remove, it has predecessors
-    elif op['type'] in {'add', 'remove'} and "de verify todo" and "todo dat ene vage" and op['preds']:
+    # in pseudocode need to still verify and check if it is in the graph, but has been done before in our code 
+    elif op['type'] in {'add', 'remove'} and op['preds']:
         maxDepth = 0
         for depHash in op['preds']:
             depOp = ops_by_hash[depHash]
             added, depth = check_graph(ops_by_hash, depOp, added, depth)
             maxDepth = max [maxDepth, depth[depOp]]
-        if precedes(ops_by_hash, "todo prev", op) and "todo":
-            Exception("invalid graph - check_graph")
+            # there does not exist an operation that came before that added the key that signs this operation:
+        if not any([added_key == op['signed_by'] and precedes(ops_by_hash, add_op, op) for added_key, add_op in added]):
+            Exception("signing key was not yet added to the graph")
         if op['type'] == 'add':
-            added.add((p_k2, op))
+            added.add((op['added_key'], op))
         return (added, depth.update({op : maxDepth + 1}))
     else:
         Exception("invalid graph - check_graph")
@@ -192,8 +212,6 @@ def authority_graph(ops):
                     authority_graph.add((op1, op2))
     return authority_graph
     
-    
-
 
 def find_cycles(authority_graph, op, path):
     if op in path:
@@ -233,6 +251,7 @@ def compute_validity(ops, authority_graph, op, valid):
 
 # dit is eigenlijk de nieuwe interpret_ops
 def compute_membership(ops): 
+    # todo kijken of ik niet deel van compute seniority naar hier kan brengen zoals in interpret ops 
     seniority = compute_seniority(ops)
     auth_graph = authority_graph(ops)
     # authority graph has (op1, op2) or (op, (member, p_k))
@@ -245,8 +264,10 @@ def compute_membership(ops):
                 for cycle in cycles}
     # todo kijken hoe drop eruit ziet van vorm want ! voor authgraph2
     auth_graph2 = { (n1, n2) for n1, n2 in auth_graph if not (n1 in drop) and not (n2 in drop)}
-    valid = {compute_validity(ops, auth_graph2, "TODO", valid) for node in member_nodes}
-    return { pk for member, pk in member_nodes if "TODO"}
+    # todo die ops[pk] vervangen want denk dat dat fout is, ik moet de op van de pk krijgen volgens mij 
+    # todo kijken of ik niet dan gwn membernodes de (op, mem , pk) hou
+    valid = {compute_validity(ops, auth_graph2, ops[pk], valid) for member, pk in member_nodes}
+    return { pk for member, pk in member_nodes if valid[member, pk]}
 
 def precedes(ops_by_hash, op1, op2):
     hex_hash(op1) in op2['preds'] or any([precedes(ops_by_hash, op1, ops_by_hash[d]) for d in op2['preds']])
