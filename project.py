@@ -61,8 +61,8 @@ def post_op(signing_key, message, preds):
     return sign_msg(signing_key, {'type': 'post', 'message': message, 'preds': preds})
 
 # ADDED FOR EXERCISE 3
-def increase_pl_op(signing_key, power_level, preds):
-    return sign_msg,(signing_key, {'type': 'increase_pl', 'power_level': power_level, 'preds': preds})
+def increase_pl_op(signing_key, power_level, increased_key, preds):
+    return sign_msg,(signing_key, {'type': 'increase_pl', 'power_level': power_level, 'increased_key' : increased_key, 'preds': preds})
 
 def transitive_succs(successors, hash):
     """
@@ -119,11 +119,19 @@ def concurrent_removal(op, successors, ops_by_hash):
         for other_op in immediate_succ
     )
     
-    return (concurrent_user_removals or concurrent_adder_removals)  
+    return (concurrent_user_removals or concurrent_adder_removals) 
 
 ## ADDED FOR EXERCISE 3
-# deze moet ook checken als er concurrent nog een power level gegeven wordt => SKIP !! OF NEE PAK LAAGSTE GWN
-def search_power_level(key, preds):
+
+def is_valid_pl_increase(op, new_pl, preds, successors, ops_by_hash):
+    signer_key = op['signing_key']
+    signer_pl = search_power_level(signer_key, preds, successors, ops_by_hash)
+    
+    return signer_pl >= new_pl    
+
+## ADDED FOR EXERCISE 3
+## TODO: ik ZOEK elke keer de power level... dit lijkt te inefficiënt te zijn?? To check met Jolien Swift
+def search_power_level(key, preds, successors, ops_by_hash):
     """
     Finds the most recent power_level of a user, starting from a given set of predecessors (preds).
     
@@ -136,19 +144,34 @@ def search_power_level(key, preds):
     """
     
     currents = list(preds)  # starting with the given predecessors
-    # ^ we convert to a set to have order between predecessors
+    # ^ we convert to a list to have order between predecessors
     power_level = -100  # default power level if no updates are found
     
     while currents:
         current = currents.pop(0)  # getting the first item (most recent one to explore)
         
+        current_op = ops_by_hash[current]
+        
         # checking if this operation is a 'power_level' change for the given user
-        if current['type'] == 'increase_pl' and current['signing_key'] == key:
-            power_level = current['power_level']
+        if current_op['type'] == 'increase_pl' and current_op['increaed_key'] == key:
+            
+            # checking if valid
+            if is_valid_pl_increase(current_op, current_op['power_level'], preds, successors, ops_by_hash):
+                
+                # checking if any concurrent increases of power level of the same user
+                for pred in current_op['preds']:
+                    immediate_succs = [ops_by_hash[succ_hash] for succ_hash in successors[pred]]
+                    for succ in immediate_succs:
+                        if succ['type'] == 'increase_pl' and succ['increased_key'] == key:
+                            if is_valid_pl_increase(succ, succ['power_level'], preds, successors, ops_by_hash):
+                                # if so, we update to the LOWEST power level ## TODO: check met Jolien Swift, ik dacht gwn om safe te spelen
+                                if succ['power_level'] < power_level:
+                                    power_level = succ['power_level']
+                        
             break  # we exit early as we've found the most recent power level
         
         # adding the transitivbe predecessors to be checked next
-        currents.extend(current.get('preds', []))
+        currents.extend(current_op.get('preds', []))
     
     return power_level
             
@@ -241,7 +264,9 @@ def interpret_ops(ops):
         if  op['type'] == 'remove':
             remover = op['signed_by']
             to_remove = op['removed_key']
-            if not power_levels[to_remove] < power_levels[remover]:
+            power_level_removed = search_power_level(to_remove, op.get('preds', []), successors, ops_by_hash)
+            power_level_remover = search_power_level(remover, op.get('preds', []), successors, ops_by_hash)
+            if not power_level_removed < power_level_remover:
                raise Exception('User can only remove users with a power level < their own')            
        
     # ADDED FOR EXERCISE 2
