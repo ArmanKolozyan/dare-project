@@ -10,6 +10,12 @@ class PowerLevels(Enum):
     USER = 0
     MODERATOR = 50
     ADMINISTRATOR = 100
+   
+   
+## TODO: haal global var weg!!
+## zet gwn als argument bij de nodige functies    
+group_creator_key = None
+    
 
 
 def hex_hash(byte_str):
@@ -145,7 +151,10 @@ def search_power_level(key, preds, successors, ops_by_hash):
     
     currents = list(preds)  # starting with the given predecessors
     # ^ we convert to a list to have order between predecessors
-    power_level = -100  # default power level if no updates are found
+    power_level = PowerLevels.USER.value  # default power level if no updates are found
+    
+    if key == group_creator_key:
+        return PowerLevels.ADMINISTRATOR.value
     
     while currents:
         current = currents.pop(0)  # getting the first item (most recent one to explore)
@@ -182,6 +191,7 @@ def interpret_ops(ops):
     Takes a set of access control and application operations and computes the currently authorised set of users # UPDATED FOR EXERCISE 2
     and valid messages. Throws an exception if something is not right.
     """
+     
     
     # Check all the signatures and parse all the JSON
     # creates a dictionary ops_by_hash, where the keys are the 
@@ -237,7 +247,7 @@ def interpret_ops(ops):
     create_ops = [(hash, op) for hash, op in ops_by_hash.items() if op['type'] == 'create']
     if len(create_ops) != 1:
         raise Exception('There must be exactly one create operation')
-    create_hash, create_op = create_ops[0]
+    
 
     # Only the group creator may sign add/remove ops (TODO: change this!)
     # if any(op['signed_by'] != create_op['signed_by'] for op in parsed_ops if op['type'] != 'post'):
@@ -259,7 +269,9 @@ def interpret_ops(ops):
                 if not (op['type'] == 'add' and concurrent_removal(op, successors, ops_by_hash)):
                     
                     ## ADDED FOR EXERCISE 3: INITIALIZING POWER LEVELS
-                    power_levels[added_key] = PowerLevels.ADMINISTRATOR.value if op['type'] == 'create' else PowerLevels.USER.value
+                    if op['type'] == 'create':
+                        print(group_creator_key)
+                        group_creator_key = op['signed_by']
                     members.add(added_key)
         if  op['type'] == 'remove':
             remover = op['signed_by']
@@ -267,7 +279,7 @@ def interpret_ops(ops):
             power_level_removed = search_power_level(to_remove, op.get('preds', []), successors, ops_by_hash)
             power_level_remover = search_power_level(remover, op.get('preds', []), successors, ops_by_hash)
             if not power_level_removed < power_level_remover:
-               raise Exception('User can only remove users with a power level < their own')            
+                raise Exception('User can only remove users with a power level < their own')            
        
     # ADDED FOR EXERCISE 2
     # If a user is removed, only the messages they posted while they were a member remain valid. 
