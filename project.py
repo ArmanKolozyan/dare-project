@@ -4,6 +4,14 @@ import unittest
 from hashlib import sha256
 from nacl.signing import SigningKey, VerifyKey
 
+# ADDED FOR EXERCISE 3
+from enum import Enum
+class PowerLevels(Enum):
+    USER = 0
+    MODERATOR = 50
+    ADMINISTRATOR = 100
+
+
 def hex_hash(byte_str):
     """Returns the SHA-256 hash of byte string ``byte_str``, encoded as hexadecimal."""
     return sha256(byte_str).hexdigest()
@@ -51,6 +59,10 @@ def post_op(signing_key, message, preds):
     ``message`` is the content of the chat message, and ``preds`` is a list of hashes of immediate predecessor operations.
     """
     return sign_msg(signing_key, {'type': 'post', 'message': message, 'preds': preds})
+
+# ADDED FOR EXERCISE 3
+def increase_pl_op(signing_key, power_level, preds):
+    return sign_msg,(signing_key, {'type': 'increase_pl', 'power_level': power_level, 'preds': preds})
 
 def transitive_succs(successors, hash):
     """
@@ -108,7 +120,39 @@ def concurrent_removal(op, successors, ops_by_hash):
     )
     
     return (concurrent_user_removals or concurrent_adder_removals)  
+
+## ADDED FOR EXERCISE 3
+# deze moet ook checken als er concurrent nog een power level gegeven wordt => SKIP !! OF NEE PAK LAAGSTE GWN
+def search_power_level(key, preds):
+    """
+    Finds the most recent power_level of a user, starting from a given set of predecessors (preds).
     
+    Parameters:
+        key: The public key of the user.
+        preds: The list of direct predecessor operations to start searching from.
+        
+    Returns:
+        The most recent power level of the user if found, or -100 if no power level change is found.
+    """
+    
+    currents = list(preds)  # starting with the given predecessors
+    # ^ we convert to a set to have order between predecessors
+    power_level = -100  # default power level if no updates are found
+    
+    while currents:
+        current = currents.pop(0)  # getting the first item (most recent one to explore)
+        
+        # checking if this operation is a 'power_level' change for the given user
+        if current['type'] == 'increase_pl' and current['signing_key'] == key:
+            power_level = current['power_level']
+            break  # we exit early as we've found the most recent power level
+        
+        # adding the transitivbe predecessors to be checked next
+        currents.extend(current.get('preds', []))
+    
+    return power_level
+            
+        
 
 def interpret_ops(ops):
     """
@@ -192,8 +236,13 @@ def interpret_ops(ops):
                 if not (op['type'] == 'add' and concurrent_removal(op, successors, ops_by_hash)):
                     
                     ## ADDED FOR EXERCISE 3: INITIALIZING POWER LEVELS
-                    power_levels[added_key] = 100 if op['type'] == 'create' else 0
+                    power_levels[added_key] = PowerLevels.ADMINISTRATOR.value if op['type'] == 'create' else PowerLevels.USER.value
                     members.add(added_key)
+        if  op['type'] == 'remove':
+            remover = op['signed_by']
+            to_remove = op['removed_key']
+            if not power_levels[to_remove] < power_levels[remover]:
+               raise Exception('User can only remove users with a power level < their own')            
        
     # ADDED FOR EXERCISE 2
     # If a user is removed, only the messages they posted while they were a member remain valid. 
