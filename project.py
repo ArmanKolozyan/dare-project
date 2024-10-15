@@ -191,7 +191,9 @@ def interpret_ops(ops):
     Takes a set of access control and application operations and computes the currently authorised set of users # UPDATED FOR EXERCISE 2
     and valid messages. Throws an exception if something is not right.
     """
-     
+    
+    # to change the value of a global variable inside a function, we need to refer to the variable by using the 'global' keyword
+    global group_creator_key 
     
     # Check all the signatures and parse all the JSON
     # creates a dictionary ops_by_hash, where the keys are the 
