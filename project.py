@@ -12,9 +12,8 @@ class PowerLevels(Enum):
     ADMINISTRATOR = 100
    
    
-## TODO: haal global var weg!!
-## zet gwn als argument bij de nodige functies    
-group_creator_key = None
+   
+#group_creator_key = None
     
 
 
@@ -68,7 +67,7 @@ def post_op(signing_key, message, preds):
 
 # ADDED FOR EXERCISE 3
 def increase_pl_op(signing_key, power_level, increased_key, preds):
-    return sign_msg,(signing_key, {'type': 'increase_pl', 'power_level': power_level, 'increased_key' : increased_key, 'preds': preds})
+    return sign_msg(signing_key, {'type': 'increase_pl', 'power_level': power_level, 'increased_key' : increased_key, 'preds': preds})
 
 def transitive_succs(successors, hash):
     """
@@ -128,9 +127,10 @@ def concurrent_removal(op, successors, ops_by_hash):
     return (concurrent_user_removals or concurrent_adder_removals) 
 
 ## ADDED FOR EXERCISE 3
-
+## Checks whether the power level increase is valid, i.e., the signer of the operation
+## has sufficient power.
 def is_valid_pl_increase(op, new_pl, preds, successors, ops_by_hash):
-    signer_key = op['signing_key']
+    signer_key = op['signed_by']
     signer_pl = search_power_level(signer_key, preds, successors, ops_by_hash)
     
     return signer_pl >= new_pl    
@@ -148,13 +148,16 @@ def search_power_level(key, preds, successors, ops_by_hash):
     Returns:
         The most recent power level of the user if found, or -100 if no power level change is found.
     """
+        
+    # the creator of the group has Administrator rights, no checking needed
+    # if key == group_creator_key:
+    #     return PowerLevels.ADMINISTRATOR.value
     
     currents = list(preds)  # starting with the given predecessors
     # ^ we convert to a list to have order between predecessors
-    power_level = PowerLevels.USER.value  # default power level if no updates are found
     
-    if key == group_creator_key:
-        return PowerLevels.ADMINISTRATOR.value
+    power_level = PowerLevels.USER.value  # default power level if no updates are found
+
     
     while currents:
         current = currents.pop(0)  # getting the first item (most recent one to explore)
@@ -179,6 +182,9 @@ def search_power_level(key, preds, successors, ops_by_hash):
                         
             break  # we exit early as we've found the most recent power level
         
+        if current_op['type'] == 'create' and current_op['signed_by'] == key:
+            return PowerLevels.ADMINISTRATOR.value
+        
         # adding the transitivbe predecessors to be checked next
         currents.extend(current_op.get('preds', []))
     
@@ -193,7 +199,7 @@ def interpret_ops(ops):
     """
     
     # to change the value of a global variable inside a function, we need to refer to the variable by using the 'global' keyword
-    global group_creator_key 
+    # global group_creator_key 
     
     # Check all the signatures and parse all the JSON
     # creates a dictionary ops_by_hash, where the keys are the 
@@ -202,9 +208,6 @@ def interpret_ops(ops):
     ops_by_hash = {hex_hash(op): verify_msg(op) for op in ops}
     # list of the verified and parsed operations
     parsed_ops = ops_by_hash.values()
-    
-    ## ADDED FOR EXERCISE 3: KEEPING A DICTIONARY OF KEY -> POWER LEVEL
-    power_levels = {}
 
     ## SCHEMA VALIDATION
     # Every op must be one of the expected types
@@ -271,10 +274,10 @@ def interpret_ops(ops):
                 if not (op['type'] == 'add' and concurrent_removal(op, successors, ops_by_hash)):
                     
                     ## ADDED FOR EXERCISE 3: INITIALIZING POWER LEVELS
-                    if op['type'] == 'create':
-                        print(group_creator_key)
-                        group_creator_key = op['signed_by']
+                    # if op['type'] == 'create':
+                        #group_creator_key = op['signed_by']
                     members.add(added_key)
+                    
         if  op['type'] == 'remove':
             remover = op['signed_by']
             to_remove = op['removed_key']
