@@ -94,7 +94,7 @@ def transitive_preds(predecessors, hash):
 ## NOW WE ALSO CHECK WHETHER THE ADDED USER OR THE ADDING USER IS CONCURRENTLY REMOVED!
 def concurrent_removal(op, successors, ops_by_hash):
     """
-    Checks if there is a concurrent 'remove' operation for the same added_key # TODO: check met jolien of mijn logica juist is
+    Checks if there is a concurrent 'remove' operation for the same added_key 
     that shares at least one predecessor with the given 'add' operation.
     
     Parameters:
@@ -129,15 +129,14 @@ def concurrent_removal(op, successors, ops_by_hash):
 ## ADDED FOR EXERCISE 3
 ## Checks whether the power level increase is valid, i.e., the signer of the operation
 ## has sufficient power.
-def is_valid_pl_increase(op, new_pl, preds, successors, ops_by_hash):
+def is_valid_pl_increase(op, new_pl, preds, predecessors, successors, ops_by_hash):
     signer_key = op['signed_by']
-    signer_pl = search_power_level(signer_key, preds, successors, ops_by_hash)
+    signer_pl = search_power_level(signer_key, preds, predecessors, successors, ops_by_hash)
     
     return signer_pl >= new_pl    
 
 ## ADDED FOR EXERCISE 3
-## TODO: ik ZOEK elke keer de power level... dit lijkt te inefficiënt te zijn?? To check met Jolien Swift
-def search_power_level(key, preds, successors, ops_by_hash):
+def search_power_level(key, preds, predecessors, successors, ops_by_hash):
     """
     Finds the most recent power_level of a user, starting from a given set of predecessors (preds).
     
@@ -165,10 +164,61 @@ def search_power_level(key, preds, successors, ops_by_hash):
         current_op = ops_by_hash[current]
         
         # checking if this operation is a 'power_level' change for the given user
-        if current_op['type'] == 'increase_pl' and current_op['increaed_key'] == key:
+        if current_op['type'] == 'increase_pl' and current_op['increased_key'] == key:
             
             # checking if valid
-            if is_valid_pl_increase(current_op, current_op['power_level'], preds, successors, ops_by_hash):
+            if is_valid_pl_increase(current_op, current_op['power_level'], predecessors[current], successors, ops_by_hash):
+                
+                # checking if any concurrent increases of power level of the same user
+                for pred in current_op['preds']:
+                    immediate_succs = [ops_by_hash[succ_hash] for succ_hash in successors[pred]]
+                    for succ in immediate_succs:
+                        if succ['type'] == 'increase_pl' and succ['increased_key'] == key:
+                            if is_valid_pl_increase(succ, succ['power_level'], predecessors[succ], successors, ops_by_hash):
+                                # if so, we update to the LOWEST power level ## TODO: check met Jolien Swift, ik dacht gwn om safe te spelen
+                                # OF GROOTSTE AUTORITIET
+                                # OF HASH ALS TIGHT-BREAK
+                                if succ['power_level'] < power_level:
+                                    power_level = succ['power_level']
+                                    break  # we exit early as we've found the most recent power level
+        
+        if current_op['type'] == 'create' and current_op['signed_by'] == key:
+            power_level = PowerLevels.ADMINISTRATOR.value
+            break
+        
+        # adding the transitivbe predecessors to be checked next
+        currents.extend(current_op.get('preds', []))
+    
+    return power_level
+
+## TODO:
+# 1) comments
+# 2) zie de argumenten preds en predecessors, kan je ze niet mergen naar 1???
+# 3) kan je de 2 procedures niet mergen naar 1??
+# 4) denk eens goed na over edge cases: wat als je king bent, en een mens probeert je een slaaf te maken, mag dat?? 
+# 5) tests schrijven          
+def search_power_level_succ(key, nexts, preds, predecessors, successors, ops_by_hash):
+        
+    # the creator of the group has Administrator rights, no checking needed
+    # if key == group_creator_key:
+    #     return PowerLevels.ADMINISTRATOR.value
+    
+    currents = nexts  # starting with the given predecessors
+    # ^ we convert to a list to have order between predecessors
+    
+    power_level = PowerLevels.USER.value  # default power level if no updates are found
+
+    
+    while currents:
+        current = currents.pop(0)  # getting the first item (most recent one to explore)
+        
+        current_op = ops_by_hash[current]
+        
+        # checking if this operation is a 'power_level' change for the given user
+        if current_op['type'] == 'increase_pl' and current_op['increased_key'] == key:
+            
+            # checking if valid
+            if is_valid_pl_increase(current_op, current_op['power_level'], preds, predecessors, successors, ops_by_hash):
                 
                 # checking if any concurrent increases of power level of the same user
                 for pred in current_op['preds']:
@@ -177,20 +227,19 @@ def search_power_level(key, preds, successors, ops_by_hash):
                         if succ['type'] == 'increase_pl' and succ['increased_key'] == key:
                             if is_valid_pl_increase(succ, succ['power_level'], preds, successors, ops_by_hash):
                                 # if so, we update to the LOWEST power level ## TODO: check met Jolien Swift, ik dacht gwn om safe te spelen
+                                # OF GROOTSTE AUTORITIET
+                                # OF HASH ALS TIGHT-BREAK
                                 if succ['power_level'] < power_level:
                                     power_level = succ['power_level']
-                        
-            break  # we exit early as we've found the most recent power level
-        
+                                
         if current_op['type'] == 'create' and current_op['signed_by'] == key:
-            return PowerLevels.ADMINISTRATOR.value
+            power_level = PowerLevels.ADMINISTRATOR.value
+            break
         
-        # adding the transitivbe predecessors to be checked next
-        currents.extend(current_op.get('preds', []))
+        # adding the transitivbe predecessors to be checked next      
+        currents.extend(successors.get(current, []))
     
-    return power_level
-            
-        
+    return power_level        
 
 def interpret_ops(ops):
     """
@@ -211,8 +260,8 @@ def interpret_ops(ops):
 
     ## SCHEMA VALIDATION
     # Every op must be one of the expected types
-    if any(op['type'] not in {'create', 'add', 'remove', 'post'} for op in parsed_ops): # UPDATED FOR EXERCISE 2
-        raise Exception('Every op must be either create, add, remove, or post')
+    if any(op['type'] not in {'create', 'add', 'remove', 'post', 'increase_pl'} for op in parsed_ops): # UPDATED FOR EXERCISE 2 and 3
+        raise Exception('Every op must be either create, add, remove, post, or increase_pl')
     
     if any('added_key' not in op for op in parsed_ops if op['type'] == 'add'):
         raise Exception('Every add operation must have an added_key')
@@ -281,8 +330,8 @@ def interpret_ops(ops):
         if  op['type'] == 'remove':
             remover = op['signed_by']
             to_remove = op['removed_key']
-            power_level_removed = search_power_level(to_remove, op.get('preds', []), successors, ops_by_hash)
-            power_level_remover = search_power_level(remover, op.get('preds', []), successors, ops_by_hash)
+            power_level_removed = search_power_level(to_remove, op.get('preds', []), predecessors, successors, ops_by_hash)
+            power_level_remover = search_power_level(remover, op.get('preds', []), predecessors, successors, ops_by_hash)
             if not power_level_removed < power_level_remover:
                 raise Exception('User can only remove users with a power level < their own')            
        
@@ -323,7 +372,9 @@ def interpret_ops(ops):
             # if no removal (without a subsequent add) was found, we add the message to the valid messages
             if not removal_without_add:
                 messages.add(op['message'])
-    return (members, messages)
+    
+    power_levels = [(member, (search_power_level_succ(member, [create_ops[0][0]], [], predecessors, successors, ops_by_hash))) for member in members]            
+    return (members, messages, power_levels)
 
 
 class TestAccessControlList(unittest.TestCase):
@@ -340,7 +391,7 @@ class TestAccessControlList(unittest.TestCase):
         rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b), hex_hash(add_c)])
 
         # Compute group membership
-        members, _ = interpret_ops({create, add_b, add_c, rem_b})
+        members, _, _ = interpret_ops({create, add_b, add_c, rem_b})
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'carol'})
         
     
@@ -355,7 +406,7 @@ class TestAccessControlList(unittest.TestCase):
         remove_c = remove_op(self.private['alice'], self.public['carol'], [hex_hash(add_b)])
         
         # checking if Carol is not a member
-        members, _ = interpret_ops({create, add_b, add_c, remove_c})
+        members, _, _ = interpret_ops({create, add_b, add_c, remove_c})
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob'})
         
     
@@ -370,7 +421,7 @@ class TestAccessControlList(unittest.TestCase):
         remove_c = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
         
         # checking if Carol is not a member
-        members, _ = interpret_ops({create, add_b, add_c, remove_c})
+        members, _, _ = interpret_ops({create, add_b, add_c, remove_c})
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})    
             
     
@@ -388,7 +439,7 @@ class TestAccessControlList(unittest.TestCase):
         rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
 
         # computing group membership and valid posts
-        members, valid_messages = interpret_ops({create, add_b, post_by_bob, rem_b})
+        members, valid_messages, _ = interpret_ops({create, add_b, post_by_bob, rem_b})
 
         # Bob should not be a member anymore, but his post should be valid
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
@@ -409,7 +460,7 @@ class TestAccessControlList(unittest.TestCase):
         post_by_bob_after_removal = post_op(self.private['bob'], "Hello, I am still here", [hex_hash(rem_b)])
 
         # computing group membership and valid posts
-        members, valid_messages = interpret_ops({create, add_b, rem_b, post_by_bob_after_removal})
+        members, valid_messages, _ = interpret_ops({create, add_b, rem_b, post_by_bob_after_removal})
 
         # Bob should not be a member, and his post after removal should be ignored
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
@@ -433,7 +484,7 @@ class TestAccessControlList(unittest.TestCase):
         post_by_bob = post_op(self.private['bob'], "Hello, I am still here", [hex_hash(add_b_2)])
 
         # computing group membership and valid posts
-        members, valid_messages = interpret_ops({create, add_b, rem_b, add_b_2, post_by_bob})
+        members, valid_messages, _ = interpret_ops({create, add_b, rem_b, add_b_2, post_by_bob})
 
         # Bob should not be a member, and his post after removal should be ignored
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob'})
@@ -457,11 +508,32 @@ class TestAccessControlList(unittest.TestCase):
         add_b_2 = add_op(self.private['alice'], self.public['bob'], [hex_hash(post_by_bob)])
 
         # computing group membership and valid posts
-        members, valid_messages = interpret_ops({create, add_b, rem_b, add_b_2, post_by_bob})
+        members, valid_messages, _ = interpret_ops({create, add_b, rem_b, add_b_2, post_by_bob})
 
         # Bob should not be a member, and his post after removal should be ignored
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob'})
-        self.assertEqual(valid_messages, set())  # the post is invalid    
+        self.assertEqual(valid_messages, set())  # the post is invalid  
+        
+    
+    # ADDED FOR EXERCISE 3
+    def test_valid_power_increase_moderator(self):
+        
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        
+        increase_pl = increase_pl_op(self.private['alice'], PowerLevels.MODERATOR.value, self.public['bob'], [hex_hash(add_b)])
+        
+        members, valid_messages, power_levels = interpret_ops({create, add_b, increase_pl})
+        
+        print([(self.friendly_name[member], power_level) for (member, power_level) in power_levels])
+        
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, {('alice', 100), ('bob', 0)})
+        
+        
+        
+        
+        
+              
             
     
     def test_failure_1(self):
