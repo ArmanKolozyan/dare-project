@@ -287,6 +287,35 @@ class TestAccessControlList(unittest.TestCase):
         members = interpret_ops({create, add_b, add_c, rem_b})
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'carol'})
 
+    def test_paper_figure_2(self):
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        add_c = add_op(self.private['alice'], self.public['carol'], [hex_hash(add_b)])
+        add_d = add_op(self.private['bob'], self.public['dave'], [hex_hash(add_b)])
+
+        members = interpret_ops({create, add_b, add_c, add_d})
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob', 'carol', 'dave'})
+
+    def test_paper_figure_3(self):
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        remove_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+        add_c = add_op(self.private['bob'], self.public['carol'], [hex_hash(add_b)])
+
+        members = interpret_ops({create, add_b, remove_b, add_c})
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
+
+    def test_paper_figure_4(self):
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        add_c = add_op(self.private['bob'], self.public['carol'], [hex_hash(add_b)])
+        remove_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_c)])
+
+
+        members = interpret_ops({create, add_b, remove_b, add_c})
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'carol'})
+
+
 
 if __name__ == '__main__':
     unittest.main()
