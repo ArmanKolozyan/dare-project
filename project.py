@@ -4,6 +4,19 @@ import unittest
 from hashlib import sha256
 from nacl.signing import SigningKey, VerifyKey
 
+# ADDED FOR EXERCISE 3
+from enum import Enum
+class PowerLevels(Enum):
+    USER = 0
+    MODERATOR = 50
+    ADMINISTRATOR = 100
+   
+   
+   
+#group_creator_key = None
+    
+
+
 def hex_hash(byte_str):
     """Returns the SHA-256 hash of byte string ``byte_str``, encoded as hexadecimal."""
     return sha256(byte_str).hexdigest()
@@ -51,6 +64,10 @@ def post_op(signing_key, message, preds):
     ``message`` is the content of the chat message, and ``preds`` is a list of hashes of immediate predecessor operations.
     """
     return sign_msg(signing_key, {'type': 'post', 'message': message, 'preds': preds})
+
+# ADDED FOR EXERCISE 3
+def increase_pl_op(signing_key, power_level, increased_key, preds):
+    return sign_msg(signing_key, {'type': 'increase_pl', 'power_level': power_level, 'increased_key' : increased_key, 'preds': preds})
 
 def transitive_succs(successors, hash):
     """
@@ -107,14 +124,82 @@ def concurrent_removal(op, successors, ops_by_hash):
         for other_op in immediate_succ
     )
     
-    return (concurrent_user_removals or concurrent_adder_removals)  
+    return (concurrent_user_removals or concurrent_adder_removals) 
+
+## ADDED FOR EXERCISE 3
+## Checks whether the power level increase is valid, i.e., the signer of the operation
+## has sufficient power.
+def is_valid_pl_increase(op, new_pl, preds, successors, ops_by_hash):
+    signer_key = op['signed_by']
+    signer_pl = search_power_level(signer_key, preds, successors, ops_by_hash)
     
+    return signer_pl >= new_pl    
+
+## ADDED FOR EXERCISE 3
+## TODO: ik ZOEK elke keer de power level... dit lijkt te inefficiënt te zijn?? To check met Jolien Swift
+def search_power_level(key, preds, successors, ops_by_hash):
+    """
+    Finds the most recent power_level of a user, starting from a given set of predecessors (preds).
+    
+    Parameters:
+        key: The public key of the user.
+        preds: The list of direct predecessor operations to start searching from.
+        
+    Returns:
+        The most recent power level of the user if found, or -100 if no power level change is found.
+    """
+        
+    # the creator of the group has Administrator rights, no checking needed
+    # if key == group_creator_key:
+    #     return PowerLevels.ADMINISTRATOR.value
+    
+    currents = list(preds)  # starting with the given predecessors
+    # ^ we convert to a list to have order between predecessors
+    
+    power_level = PowerLevels.USER.value  # default power level if no updates are found
+
+    
+    while currents:
+        current = currents.pop(0)  # getting the first item (most recent one to explore)
+        
+        current_op = ops_by_hash[current]
+        
+        # checking if this operation is a 'power_level' change for the given user
+        if current_op['type'] == 'increase_pl' and current_op['increaed_key'] == key:
+            
+            # checking if valid
+            if is_valid_pl_increase(current_op, current_op['power_level'], preds, successors, ops_by_hash):
+                
+                # checking if any concurrent increases of power level of the same user
+                for pred in current_op['preds']:
+                    immediate_succs = [ops_by_hash[succ_hash] for succ_hash in successors[pred]]
+                    for succ in immediate_succs:
+                        if succ['type'] == 'increase_pl' and succ['increased_key'] == key:
+                            if is_valid_pl_increase(succ, succ['power_level'], preds, successors, ops_by_hash):
+                                # if so, we update to the LOWEST power level ## TODO: check met Jolien Swift, ik dacht gwn om safe te spelen
+                                if succ['power_level'] < power_level:
+                                    power_level = succ['power_level']
+                        
+            break  # we exit early as we've found the most recent power level
+        
+        if current_op['type'] == 'create' and current_op['signed_by'] == key:
+            return PowerLevels.ADMINISTRATOR.value
+        
+        # adding the transitivbe predecessors to be checked next
+        currents.extend(current_op.get('preds', []))
+    
+    return power_level
+            
+        
 
 def interpret_ops(ops):
     """
     Takes a set of access control and application operations and computes the currently authorised set of users # UPDATED FOR EXERCISE 2
     and valid messages. Throws an exception if something is not right.
     """
+    
+    # to change the value of a global variable inside a function, we need to refer to the variable by using the 'global' keyword
+    # global group_creator_key 
     
     # Check all the signatures and parse all the JSON
     # creates a dictionary ops_by_hash, where the keys are the 
@@ -123,9 +208,6 @@ def interpret_ops(ops):
     ops_by_hash = {hex_hash(op): verify_msg(op) for op in ops}
     # list of the verified and parsed operations
     parsed_ops = ops_by_hash.values()
-    
-    ## ADDED FOR EXERCISE 3: KEEPING A DICTIONARY OF KEY -> POWER LEVEL
-    power_levels = {}
 
     ## SCHEMA VALIDATION
     # Every op must be one of the expected types
@@ -170,7 +252,7 @@ def interpret_ops(ops):
     create_ops = [(hash, op) for hash, op in ops_by_hash.items() if op['type'] == 'create']
     if len(create_ops) != 1:
         raise Exception('There must be exactly one create operation')
-    create_hash, create_op = create_ops[0]
+    
 
     # Only the group creator may sign add/remove ops (TODO: change this!)
     # if any(op['signed_by'] != create_op['signed_by'] for op in parsed_ops if op['type'] != 'post'):
@@ -192,8 +274,17 @@ def interpret_ops(ops):
                 if not (op['type'] == 'add' and concurrent_removal(op, successors, ops_by_hash)):
                     
                     ## ADDED FOR EXERCISE 3: INITIALIZING POWER LEVELS
-                    power_levels[added_key] = 100 if op['type'] == 'create' else 0
+                    # if op['type'] == 'create':
+                        #group_creator_key = op['signed_by']
                     members.add(added_key)
+                    
+        if  op['type'] == 'remove':
+            remover = op['signed_by']
+            to_remove = op['removed_key']
+            power_level_removed = search_power_level(to_remove, op.get('preds', []), successors, ops_by_hash)
+            power_level_remover = search_power_level(remover, op.get('preds', []), successors, ops_by_hash)
+            if not power_level_removed < power_level_remover:
+                raise Exception('User can only remove users with a power level < their own')            
        
     # ADDED FOR EXERCISE 2
     # If a user is removed, only the messages they posted while they were a member remain valid. 
