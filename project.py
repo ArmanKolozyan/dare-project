@@ -130,12 +130,8 @@ def concurrent_removal(op, successors, ops_by_hash):
 ## Checks whether the power level increase is valid, i.e., the signer of the operation
 ## has sufficient power.
 def is_valid_pl_increase(op, new_pl, preds, predecessors, successors, ops_by_hash):
-    print("CHECKING")
     signer_key = op['signed_by']
     signer_pl = search_power_level(signer_key, preds, predecessors, successors, ops_by_hash)
-    
-    print(signer_pl)
-    print(new_pl)
     
     return (signer_pl >= new_pl and new_pl <= signer_pl)   
 
@@ -161,15 +157,11 @@ def search_power_level(key, preds, predecessors, successors, ops_by_hash):
     
     power_level = PowerLevels.USER.value  # default power level if no updates are found
 
-    print("VALIDARTION? ")
-
     while currents:
         current = currents.pop(0)  # getting the first item (most recent one to explore)
         
         current_op = ops_by_hash[current]
-        
-        print("VALIDARTION ")
-        
+                
         # checking if this operation is a 'power_level' change for the given user
         if current_op['type'] == 'increase_pl' and current_op['increased_key'] == key:
             
@@ -229,35 +221,22 @@ def search_power_level_succ(key, nexts, preds, predecessors, successors, ops_by_
         
         # checking if this operation is a 'power_level' change for the given user
         if current_op['type'] == 'increase_pl' and current_op['increased_key'] == key:
-            print("ZZZZZZZZZZZZZZZZ")
-            print(current_op['power_level'])
             
             # checking if valid
             if is_valid_pl_increase(current_op, current_op['power_level'], predecessors[current], predecessors, successors, ops_by_hash):
                 
                 if power_level < current_op['power_level']:
-                    print("UPDATED")
                     power_level = current_op['power_level']
                 
                 # checking if any concurrent increases of power level of the same user
                 for pred in current_op['preds']:
                     immediate_succs = [(succ_hash, ops_by_hash[succ_hash]) for succ_hash in successors[pred]]
                     for (succ_hash, succ) in immediate_succs:
-                        print("ALERTOOOOOOO")
-                        print(succ['type'])
-                        print(key)
-                        print(succ['increased_key'])
                         if succ['type'] == 'increase_pl' and succ['increased_key'] == key:
-                            print("OUTT")
                             if is_valid_pl_increase(succ, succ['power_level'], predecessors[succ_hash], predecessors, successors, ops_by_hash):
-                                print("in")
                                 # if so, we update to the LOWEST power level ## TODO: check met Jolien Swift, ik dacht gwn om safe te spelen
                                 # OF GROOTSTE AUTORITIET
                                 # OF HASH ALS TIGHT-BREAK
-                                print("HMMM CHECKOLADOHHHH")
-                                print("-----")
-                                print(succ)
-                                print("-----")
                                 if succ['power_level'] < power_level:
                                     power_level = succ['power_level']
                                 
