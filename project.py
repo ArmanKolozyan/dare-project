@@ -174,17 +174,17 @@ def search_power_level(key, preds, predecessors, successors, ops_by_hash):
         if current_op['type'] == 'increase_pl' and current_op['increased_key'] == key:
             
             # checking if valid
-            if is_valid_pl_increase(current_op, current_op['power_level'], predecessors[current], successors, ops_by_hash):
+            if is_valid_pl_increase(current_op, current_op['power_level'], predecessors[current], predecessors, successors, ops_by_hash):
                 
                 if power_level < current_op['power_level']:
                     power_level = current_op['power_level']
                 
                 # checking if any concurrent increases of power level of the same user
                 for pred in current_op['preds']:
-                    immediate_succs = [ops_by_hash[succ_hash] for succ_hash in successors[pred]]
-                    for succ in immediate_succs:
+                    immediate_succs = [(succ_hash, ops_by_hash[succ_hash]) for succ_hash in successors[pred]]
+                    for (succ_hash, succ) in immediate_succs:
                         if succ['type'] == 'increase_pl' and succ['increased_key'] == key:
-                            if is_valid_pl_increase(succ, succ['power_level'], predecessors[succ], successors, ops_by_hash):
+                            if is_valid_pl_increase(succ, succ['power_level'], predecessors[succ_hash], predecessors, successors, ops_by_hash):
                                 # if so, we update to the LOWEST power level ## TODO: check met Jolien Swift, ik dacht gwn om safe te spelen
                                 # OF GROOTSTE AUTORITIET
                                 # OF HASH ALS TIGHT-BREAK
@@ -513,6 +513,7 @@ class TestAccessControlList(unittest.TestCase):
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob'})
         self.assertEqual(valid_messages, {"Hello, I am still here"})  # the post is still valid
         
+        
     # ADDED FOR EXERCISE 2
     def test_invalid_post_after_removal_and_before_readding(self):
         """Test that a post made after removal, and after re-adding AFTER the message, is invalid"""
@@ -553,9 +554,10 @@ class TestAccessControlList(unittest.TestCase):
         _, _, power_levels = interpret_ops({create, add_b, increase_pl})
         
         # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be ADMINISTRATOR)        
-        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, {('alice', 100), ('bob', PowerLevels.ADMINISTRATOR.value)})
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
+                         {('alice', 100), ('bob', PowerLevels.ADMINISTRATOR.value)})
         
-    
+    # ADDED FOR EXERCISE 3
     def test_valid_power_increase_moderator(self):
         """Test that increasing the power level of a user to MODERATOR is handled correctly."""
         
@@ -570,9 +572,10 @@ class TestAccessControlList(unittest.TestCase):
         _, _, power_levels = interpret_ops({create, add_b, increase_pl})
         
         # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be MODERATOR)        
-        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.MODERATOR.value)})
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
+                         {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.MODERATOR.value)})
     
-    
+    # ADDED FOR EXERCISE 3
     def test_valid_power_increase_user(self):
         """Test that increasing the power level of a user to USER is handled correctly."""
         
@@ -587,9 +590,10 @@ class TestAccessControlList(unittest.TestCase):
         _, _, power_levels = interpret_ops({create, add_b, increase_pl})
         
         # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be USER)        
-        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.USER.value)})   
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
+                         {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.USER.value)})   
     
-    
+    # ADDED FOR EXERCISE 3
     def test_valid_power_increase_default(self):
         """Test the default power levels when no power level increase operation is performed."""
         
@@ -601,8 +605,54 @@ class TestAccessControlList(unittest.TestCase):
         _, _, power_levels = interpret_ops({create, add_b})
         
         # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be USER)
-        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.USER.value)})       
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
+                         {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.USER.value)})  
+    
+    
+    # ADDED FOR EXERCISE 3
+    def test_valid_power_increase_3_people(self):
+        """Test that power levels can be correctly increased when there are multiple members in the group."""   
         
+        # creating group, adding Bob and Carol
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        add_c = add_op(self.private['alice'], self.public['carol'], [hex_hash(add_b)])
+        
+        # group creator increases Bob's power level to MODERATOR
+        increase_pl_Bob = increase_pl_op(self.private['alice'], PowerLevels.MODERATOR.value, self.public['bob'], [hex_hash(add_c)])
+        
+        # Bob increases Carol's power level to MODERATOR
+        increase_pl_Carol = increase_pl_op(self.private['bob'], PowerLevels.MODERATOR.value, self.public['carol'], [hex_hash(increase_pl_Bob)])
+
+        # computing group membership and power levels
+        _, _, power_levels = interpret_ops({create, add_b, add_c, increase_pl_Bob, increase_pl_Carol})
+        
+        # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be USER)
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
+                         {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.MODERATOR.value), ('carol', PowerLevels.MODERATOR.value)})      
+    
+    
+    # ADDED FOR EXERCISE 3
+    def test_invalid_power_increase_higher_pl(self): 
+        """Test that an invalid power level increase (higher than the signer's power level) is handled correctly."""  
+        
+        # creating group, adding Bob and Carol
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        add_c = add_op(self.private['alice'], self.public['carol'], [hex_hash(add_b)])
+        
+        # group creator increases Bob's power level to MODERATOR
+        increase_pl_Bob = increase_pl_op(self.private['alice'], PowerLevels.MODERATOR.value, self.public['bob'], [hex_hash(add_c)])
+        
+        # Bob tries to increase Carol's power level to ADMINISTRATOR (which is higher than its own power level)
+        increase_pl_Carol = increase_pl_op(self.private['bob'], PowerLevels.ADMINISTRATOR.value, self.public['carol'], [hex_hash(increase_pl_Bob)])
+
+        # computing group membership and power levels
+        _, _, power_levels = interpret_ops({create, add_b, add_c, increase_pl_Bob, increase_pl_Carol})
+        
+        # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be USER)
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
+                         {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.MODERATOR.value), ('carol', PowerLevels.USER.value)})          
         
     def test_failure_1(self):
         with self.assertRaises(Exception):
