@@ -229,7 +229,8 @@ def search_power_level_succ(key, nexts, preds, predecessors, successors, ops_by_
         
         # checking if this operation is a 'power_level' change for the given user
         if current_op['type'] == 'increase_pl' and current_op['increased_key'] == key:
-            print("UPDATED?")
+            print("ZZZZZZZZZZZZZZZZ")
+            print(current_op['power_level'])
             
             # checking if valid
             if is_valid_pl_increase(current_op, current_op['power_level'], predecessors[current], predecessors, successors, ops_by_hash):
@@ -240,13 +241,20 @@ def search_power_level_succ(key, nexts, preds, predecessors, successors, ops_by_
                 
                 # checking if any concurrent increases of power level of the same user
                 for pred in current_op['preds']:
-                    immediate_succs = [ops_by_hash[succ_hash] for succ_hash in successors[pred]]
-                    for succ in immediate_succs:
+                    immediate_succs = [(succ_hash, ops_by_hash[succ_hash]) for succ_hash in successors[pred]]
+                    for (succ_hash, succ) in immediate_succs:
+                        print("ALERTOOOOOOO")
+                        print(succ['type'])
+                        print(key)
+                        print(succ['increased_key'])
                         if succ['type'] == 'increase_pl' and succ['increased_key'] == key:
-                            if is_valid_pl_increase(succ, succ['power_level'], preds, predecessors, successors, ops_by_hash):
+                            print("OUTT")
+                            if is_valid_pl_increase(succ, succ['power_level'], predecessors[succ_hash], predecessors, successors, ops_by_hash):
+                                print("in")
                                 # if so, we update to the LOWEST power level ## TODO: check met Jolien Swift, ik dacht gwn om safe te spelen
                                 # OF GROOTSTE AUTORITIET
                                 # OF HASH ALS TIGHT-BREAK
+                                print("HMMM CHECKOLADOHHHH")
                                 print("-----")
                                 print(succ)
                                 print("-----")
@@ -403,9 +411,7 @@ class TestAccessControlList(unittest.TestCase):
     private = {name: SigningKey.generate() for name in {'alice', 'bob', 'carol', 'dave'}}
     public = {name: key.verify_key.encode().hex() for name, key in private.items()}
     friendly_name = {public_key: name for name, public_key in public.items()}
-        
     
-
     def test_add_remove(self):
         # Make some example ops
         create = create_op(self.private['alice'])
@@ -652,21 +658,21 @@ class TestAccessControlList(unittest.TestCase):
         
         # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be USER)
         self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
-                         {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.MODERATOR.value), ('carol', PowerLevels.USER.value)})          
-        
+                         {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.MODERATOR.value), ('carol', PowerLevels.USER.value)})    
+
+                 
     def test_failure_1(self):
         with self.assertRaises(Exception):
             # adding without creating
             create = create_op(self.private['alice'])
             add_b = add_op(self.private['alice'], self.public('bob'), [])
-    
+
     def test_failure_2(self):
         with self.assertRaises(Exception):
             # adding with wrong key
             create = create_op(self.private['alice'])
-            add_b = add_op(self.private['arman'], self.public['bob'], [hex_hash(create)])      
-                   
-                   
+            add_b = add_op(self.private['arman'], self.public['bob'], [hex_hash(create)])                     
+              
 
 if __name__ == '__main__':
     unittest.main()
