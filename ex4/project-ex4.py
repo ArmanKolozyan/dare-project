@@ -44,16 +44,6 @@ def remove_op(signing_key, removed_key, preds):
     ``preds`` is a list of hashes of immediate predecessor operations."""
     return sign_msg(signing_key, {'type': 'remove', 'removed_key': removed_key, 'preds': preds})
 
-#def transitive_succs(successors, hash):
- #   """
-  #  Takes ``successors``, a dictionary from operation hashes to sets of successor hashes, and a
- #   ``hash`` to start from. Returns a set of all hashes that are reachable from that starting point.
-  #  """
-   # result = {hash}
-  #  for succ in successors.get(hash, []):
- #       result.update(transitive_succs(successors, succ))
-  #  return result
-
 def interpret_ops(ops):
     """
     Takes a set of access control operations and computes the currently authorised set of users.
@@ -80,32 +70,12 @@ def interpret_ops(ops):
            for pred in op['preds']):
         raise Exception('Every hash must resolve to another op in the set')
 
-    # Get the set of successor hashes for each op
- #   successors = {}
-  #  for hash, op in ops_by_hash.items():
-   #     for pred in op.get('preds', []):
-    #        successors[pred] = successors.get(pred, set()) | {hash}
-
     # Get the public key of the group creator
     create_ops = [(hash, op) for hash, op in ops_by_hash.items() if op['type'] == 'create']
     if len(create_ops) != 1:
         raise Exception('There must be exactly one create operation')
-  #  create_hash, create_op = create_ops[0]
 
-    # Only the group creator may sign add/remove ops (TODO: change this!)
-  #  if any(op['signed_by'] != create_op['signed_by'] for op in parsed_ops):
-   #     raise Exception('Only the group creator may sign add/remove operations')
-
-    # Current group members are those who have been added, and not removed again by a remove
-    # operation that is a transitive successor to the add operation.
-  #  members = set()
-   # for hash, op in ops_by_hash.items():
-    #    if op['type'] in {'create', 'add'}:
-     #       added_key = op['signed_by'] if op['type'] == 'create' else op['added_key']
-      #      succs = [ops_by_hash[succ] for succ in transitive_succs(successors, hash)]
-       #     if not any(succ['type'] == 'remove' and succ['removed_key'] == added_key
-        #               for succ in succs):
-         #       members.add(added_key)
+    # current group members are computed by the algorithm from the paper
     return compute_membership(ops)
 
 def compute_membership(ops): 
@@ -114,8 +84,7 @@ def compute_membership(ops):
     auth_graph = authority_graph(ops_by_hash) # of the form {(add/create_or_rem_op_of_pk, (member, pk)) or (op1, op2)}
     # member_nodes filters out the (op1, op2) - only the ones of the form (add/create_or_rem_op_of_pk, (member, pk)) 
     member_nodes = {member_pk for _, member_pk in auth_graph if isinstance(member_pk, tuple) and member_pk[0] == 'member'}
-    # * means unpacking the arguments
-    cycles = set().union(*[find_cycles(auth_graph, node, []) for node in member_nodes]) # of the form { ( op1_hash, op2_hash, ... , op1_hash, ...) .. } 
+    cycles = uniquify([cycle for node in member_nodes for cycle in find_cycles(auth_graph, node, [])]) # of the form [[ op1_hash, op2_hash, ... , op1_hash, ...] .. ] ; uniquify because python does not allow sets in sets, have to work with frozen sets etc.
     # By default max will compare the items by the first index. If the first index is the same then it'll compare the second index - https://stackoverflow.com/questions/18296755/python-max-function-using-key-and-lambda-expression
     # and op as third argument just as a trick to still keep the op
     # the (member, pk) vertices do not have outgoing edges - by definition
@@ -168,7 +137,6 @@ def check_graph(ops_by_hash, op_hash, added, depth):
     elif op['type'] in {'add', 'remove'} and op['preds']:
         maxDepth = 0
         for predecessor_hash in op['preds']:
-         # todo rem   predecessor_op = ops_by_hash[predecessor_hash]
             added, depth = check_graph(ops_by_hash, predecessor_hash, added, depth)
             maxDepth = max(maxDepth, depth.get(predecessor_hash, 0))
         # there does not exist an operation that came before that added the key that signs this operation:
@@ -219,18 +187,20 @@ def authority_graph(ops_by_hash):
                     authority_graph.add((hash1, hash2))
     return authority_graph
     
+def uniquify(lst_of_lsts):
+    unique = {frozenset(lst) for lst in lst_of_lsts}
+    return [list(set) for set in unique]
 
 def find_cycles(authority_graph, node, path):
     # node can be (member, pk) or op_hash
     if node in path:
-        # return a set with a tuple of all operations that come after the node in path -- tuple because cannot do set in set or list in set
-        return {tuple(path[path.index(node):])}
+        # return a list with a list of all operations that come after the node in path -- lists because cannot do nested sets in python 
+        return [path[path.index(node):]]
     else:
         preds = { op1 for op1, op2 in authority_graph if op2 == node} # all operations that causally precede the node 
         # return a set with sets of loops
-        path = [node] + path
-        return set().union(*[find_cycles(authority_graph, n, path) for n in preds]) # * means unpacking a list into arguments
-
+        path = path + [node] 
+        return [cycle for n in preds for cycle in find_cycles(authority_graph, n, path)]
 
 def compute_validity(ops_by_hash, authority_graph, node, valid):
     # node is or of the form (member, pk) or of the form op_hash
@@ -266,7 +236,6 @@ def compute_validity(ops_by_hash, authority_graph, node, valid):
     return valid
 
 def precedes(ops_by_hash, op1_hash, op2):
-    # todo overal de hash v op1 geven
     predecessors = op2.get('preds', []) # no predecessors when create
     return op1_hash in predecessors or any([precedes(ops_by_hash, op1_hash, ops_by_hash[predecessor]) for predecessor in predecessors])
 
@@ -315,7 +284,38 @@ class TestAccessControlList(unittest.TestCase):
         members = interpret_ops({create, add_b, remove_b, add_c})
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'carol'})
 
+    def test_paper_figure_6(self):
+        # cycle in the authority graph!
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        remove_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+        add_c = add_op(self.private['bob'], self.public['carol'], [hex_hash(add_b)])
+        remove_a = remove_op(self.private['carol'], self.public['alice'], [hex_hash(add_c)])
 
+        members = interpret_ops({create, add_b, remove_b, add_c, remove_a})
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
 
+    def test_mutual_removal(self):
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        remove_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+        remove_a = remove_op(self.private['bob'], self.public['alice'], [hex_hash(add_b)])
+
+        members = interpret_ops({create, add_b, remove_b, remove_a})
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
+
+    def test_mutual_removal_2(self):
+        # to test the depth looks at the first add
+        ## B first removes A, then adds it again - then both concurrently remove each other, should be resolved according to greatest seniority, should still be a
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        remove_a1 = remove_op(self.private['bob'], self.public['alice'], [hex_hash(add_b)])
+        add_a = add_op(self.private['bob'], self.public['alice'], [hex_hash(remove_a1)])
+        remove_a2 = remove_op(self.private['bob'], self.public['alice'], [hex_hash(add_a)])
+        remove_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_a)])
+
+        members = interpret_ops({create, add_b, remove_b, remove_a1, add_a, remove_a2})
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
+ 
 if __name__ == '__main__':
     unittest.main()
