@@ -660,6 +660,28 @@ class TestAccessControlList(unittest.TestCase):
         self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
                          {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.MODERATOR.value), ('carol', PowerLevels.USER.value)})    
 
+    # ADDED FOR EXERCISE 3
+    def test_concurrent_power_increase(self): 
+        
+        # creating group, adding Bob and Carol
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        add_c = add_op(self.private['alice'], self.public['carol'], [hex_hash(add_b)])
+        
+        # increasing Carol's power level
+        increase_pl_Bob = increase_pl_op(self.private['alice'], PowerLevels.MODERATOR.value, self.public['carol'], [hex_hash(add_c)])
+        
+        # group creator and Carol increase Bob's power level to different values
+        increase_pl_Bob_by_Alice = increase_pl_op(self.private['alice'], PowerLevels.ADMINISTRATOR.value, self.public['bob'], [hex_hash(increase_pl_Bob)])
+        increase_pl_Bob_by_Carol = increase_pl_op(self.private['carol'], PowerLevels.MODERATOR.value, self.public['bob'], [hex_hash(increase_pl_Bob)])
+        
+        # computing group membership and power levels
+        _, _, power_levels = interpret_ops({create, add_b, add_c, increase_pl_Bob, increase_pl_Bob_by_Alice, increase_pl_Bob_by_Carol})
+        
+        # asserting that the power level of Bob is the lowest one out of the two (namely MODERATOR) 
+        # TODO: is the one set by the person with the highest authority (namely Alice)
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
+                         {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.MODERATOR.value), ('carol', PowerLevels.MODERATOR.value)})
                  
     def test_failure_1(self):
         with self.assertRaises(Exception):
