@@ -137,7 +137,7 @@ def is_valid_pl_increase(op, new_pl, preds, predecessors, successors, ops_by_has
     print(signer_pl)
     print(new_pl)
     
-    return signer_pl >= new_pl    
+    return (signer_pl >= new_pl and new_pl <= signer_pl)   
 
 ## ADDED FOR EXERCISE 3
 def search_power_level(key, preds, predecessors, successors, ops_by_hash):
@@ -561,7 +561,7 @@ class TestAccessControlList(unittest.TestCase):
         
         # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be ADMINISTRATOR)        
         self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
-                         {('alice', 100), ('bob', PowerLevels.ADMINISTRATOR.value)})
+                         {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.ADMINISTRATOR.value)})
         
     # ADDED FOR EXERCISE 3
     def test_valid_power_increase_moderator(self):
@@ -662,6 +662,8 @@ class TestAccessControlList(unittest.TestCase):
 
     # ADDED FOR EXERCISE 3
     def test_concurrent_power_increase(self): 
+        """Test that when two members attempt to increase another member's power level concurrently, 
+        the lower power level is applied (unless specified otherwise by the person with the highest authority)."""
         
         # creating group, adding Bob and Carol
         create = create_op(self.private['alice'])
@@ -682,6 +684,76 @@ class TestAccessControlList(unittest.TestCase):
         # TODO: is the one set by the person with the highest authority (namely Alice)
         self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
                          {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.MODERATOR.value), ('carol', PowerLevels.MODERATOR.value)})
+    
+    
+    # ADDED FOR EXERCISE 3
+    def test_latest_power_level_in_result(self):
+        """Test that the latest valid power level update is the one shown in the result containing the power level of each user."""
+        
+        # creating group and adding Bob
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        
+        # group creator increases Bob's power level to MODERATOR, then to ADMINISTRATOR
+        increase_pl_old = increase_pl_op(self.private['alice'], PowerLevels.MODERATOR.value, self.public['bob'], [hex_hash(add_b)])
+        increase_pl_new = increase_pl_op(self.private['alice'], PowerLevels.ADMINISTRATOR.value, self.public['bob'], [hex_hash(increase_pl_old)])
+        
+        # computing group membership and power levels
+        _, _, power_levels = interpret_ops({create, add_b, increase_pl_old, increase_pl_new})
+        
+        # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be ADMINISTRATOR)        
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
+                         {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.ADMINISTRATOR.value)})
+    
+    # ADDED FOR EXERCISE 3
+    def test_latest_power_level_in_action_correct(self):
+        """Test that the most recent valid power level update is applied when performing other actions involving power levels 
+        (e.g., increasing another member's power level). 
+        This is a test in which sufficient power level is obtained by Bob to do the desired action."""
+    
+        # creating group and adding Bob and Carol
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        add_c = add_op(self.private['alice'], self.public['carol'], [hex_hash(add_b)])
+        
+        # group creator increases Bob's power level to MODERATOR, then to ADMINISTRATOR
+        increase_pl_old = increase_pl_op(self.private['alice'], PowerLevels.MODERATOR.value, self.public['bob'], [hex_hash(add_c)])
+        increase_pl_new = increase_pl_op(self.private['alice'], PowerLevels.ADMINISTRATOR.value, self.public['bob'], [hex_hash(increase_pl_old)])
+        
+        # Bob should be able to increase Carol's power level to ADMINISTRATOR
+        increase_pl_Carol = increase_pl_op(self.private['bob'], PowerLevels.ADMINISTRATOR.value, self.public['carol'], [hex_hash(increase_pl_new)])
+        
+        # computing group membership and power levels
+        _, _, power_levels = interpret_ops({create, add_b, add_c, increase_pl_old, increase_pl_new, increase_pl_Carol})
+        
+        # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be ADMINISTRATOR)        
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
+                            {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.ADMINISTRATOR.value), ('carol', PowerLevels.ADMINISTRATOR.value)})
+    
+    # ADDED FOR EXERCISE 3
+    def test_latest_power_level_in_action_wrong(self):
+        """Test that the most recent valid power level update is applied when performing other actions involving power levels 
+        (e.g., increasing another member's power level).
+        This is a test in which Bob has insufficient power level to do the desired action."""
+    
+        # creating group and adding Bob and Carol
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        add_c = add_op(self.private['alice'], self.public['carol'], [hex_hash(add_b)])
+        
+        # group creator increases Bob's power level to ADMINISTRATOR, then decreases to MODERATOR
+        increase_pl_old = increase_pl_op(self.private['alice'], PowerLevels.ADMINISTRATOR.value, self.public['bob'], [hex_hash(add_c)])
+        increase_pl_new = increase_pl_op(self.private['alice'], PowerLevels.MODERATOR.value, self.public['bob'], [hex_hash(increase_pl_old)])
+        
+        # Bob should NOT be able to increase Carol's power level to ADMINISTRATOR
+        increase_pl_Carol = increase_pl_op(self.private['bob'], PowerLevels.ADMINISTRATOR.value, self.public['carol'], [hex_hash(increase_pl_new)])
+        
+        # computing group membership and power levels
+        _, _, power_levels = interpret_ops({create, add_b, add_c, increase_pl_old, increase_pl_new, increase_pl_Carol})
+        
+        # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be ADMINISTRATOR)        
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
+                            {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.MODERATOR.value), ('carol', PowerLevels.USER.value)})                    
                  
     def test_failure_1(self):
         with self.assertRaises(Exception):
