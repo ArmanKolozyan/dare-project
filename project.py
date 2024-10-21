@@ -540,18 +540,68 @@ class TestAccessControlList(unittest.TestCase):
     
     # ADDED FOR EXERCISE 3
     def test_valid_power_increase_administrator(self):
+        """Test that increasing the power level of a user to ADMINISTRATOR is handled correctly."""
         
+        # creating group and adding Bob
         create = create_op(self.private['alice'])
         add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
         
+        # group creator increases Bob's power level to ADMINISTRATOR
         increase_pl = increase_pl_op(self.private['alice'], PowerLevels.ADMINISTRATOR.value, self.public['bob'], [hex_hash(add_b)])
         
+        # computing group membership and power levels
         _, _, power_levels = interpret_ops({create, add_b, increase_pl})
         
-        print([(self.friendly_name[member], power_level) for (member, power_level) in power_levels])
+        # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be ADMINISTRATOR)        
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, {('alice', 100), ('bob', PowerLevels.ADMINISTRATOR.value)})
         
-        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, {('alice', 100), ('bob', 100)})   
+    
+    def test_valid_power_increase_moderator(self):
+        """Test that increasing the power level of a user to MODERATOR is handled correctly."""
         
+        # creating group and adding Bob
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        
+        # group creator increases Bob's power level to MODERATOR
+        increase_pl = increase_pl_op(self.private['alice'], PowerLevels.MODERATOR.value, self.public['bob'], [hex_hash(add_b)])
+        
+        # computing group membership and power levels
+        _, _, power_levels = interpret_ops({create, add_b, increase_pl})
+        
+        # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be MODERATOR)        
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.MODERATOR.value)})
+    
+    
+    def test_valid_power_increase_user(self):
+        """Test that increasing the power level of a user to USER is handled correctly."""
+        
+        # creating group and adding Bob
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        
+        # group creator increases Bob's power level to USER
+        increase_pl = increase_pl_op(self.private['alice'], PowerLevels.USER.value, self.public['bob'], [hex_hash(add_b)])
+        
+        # computing group membership and power levels
+        _, _, power_levels = interpret_ops({create, add_b, increase_pl})
+        
+        # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be USER)        
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.USER.value)})   
+    
+    
+    def test_valid_power_increase_default(self):
+        """Test the default power levels when no power level increase operation is performed."""
+        
+        # creating group and adding Bob
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        
+        # computing group membership and power levels
+        _, _, power_levels = interpret_ops({create, add_b})
+        
+        # asserting that the power levels are as expected for Alice and Bob (i.e., Bob should be USER)
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.USER.value)})       
         
         
     def test_failure_1(self):
