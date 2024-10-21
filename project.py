@@ -130,8 +130,12 @@ def concurrent_removal(op, successors, ops_by_hash):
 ## Checks whether the power level increase is valid, i.e., the signer of the operation
 ## has sufficient power.
 def is_valid_pl_increase(op, new_pl, preds, predecessors, successors, ops_by_hash):
+    print("CHECKING")
     signer_key = op['signed_by']
     signer_pl = search_power_level(signer_key, preds, predecessors, successors, ops_by_hash)
+    
+    print(signer_pl)
+    print(new_pl)
     
     return signer_pl >= new_pl    
 
@@ -157,17 +161,23 @@ def search_power_level(key, preds, predecessors, successors, ops_by_hash):
     
     power_level = PowerLevels.USER.value  # default power level if no updates are found
 
-    
+    print("VALIDARTION? ")
+
     while currents:
         current = currents.pop(0)  # getting the first item (most recent one to explore)
         
         current_op = ops_by_hash[current]
+        
+        print("VALIDARTION ")
         
         # checking if this operation is a 'power_level' change for the given user
         if current_op['type'] == 'increase_pl' and current_op['increased_key'] == key:
             
             # checking if valid
             if is_valid_pl_increase(current_op, current_op['power_level'], predecessors[current], successors, ops_by_hash):
+                
+                if power_level < current_op['power_level']:
+                    power_level = current_op['power_level']
                 
                 # checking if any concurrent increases of power level of the same user
                 for pred in current_op['preds']:
@@ -180,7 +190,8 @@ def search_power_level(key, preds, predecessors, successors, ops_by_hash):
                                 # OF HASH ALS TIGHT-BREAK
                                 if succ['power_level'] < power_level:
                                     power_level = succ['power_level']
-                                    break  # we exit early as we've found the most recent power level
+                
+                break  # we exit early as we've found the most recent power level
         
         if current_op['type'] == 'create' and current_op['signed_by'] == key:
             power_level = PowerLevels.ADMINISTRATOR.value
@@ -196,7 +207,9 @@ def search_power_level(key, preds, predecessors, successors, ops_by_hash):
 # 2) zie de argumenten preds en predecessors, kan je ze niet mergen naar 1???
 # 3) kan je de 2 procedures niet mergen naar 1??
 # 4) denk eens goed na over edge cases: wat als je king bent, en een mens probeert je een slaaf te maken, mag dat?? 
+        # hmmm, is_valid_pl_increase is genoeg denk ik?
 # 5) tests schrijven          
+# 6) prints weghalen
 def search_power_level_succ(key, nexts, preds, predecessors, successors, ops_by_hash):
         
     # the creator of the group has Administrator rights, no checking needed
@@ -216,19 +229,27 @@ def search_power_level_succ(key, nexts, preds, predecessors, successors, ops_by_
         
         # checking if this operation is a 'power_level' change for the given user
         if current_op['type'] == 'increase_pl' and current_op['increased_key'] == key:
+            print("UPDATED?")
             
             # checking if valid
-            if is_valid_pl_increase(current_op, current_op['power_level'], preds, predecessors, successors, ops_by_hash):
+            if is_valid_pl_increase(current_op, current_op['power_level'], predecessors[current], predecessors, successors, ops_by_hash):
+                
+                if power_level < current_op['power_level']:
+                    print("UPDATED")
+                    power_level = current_op['power_level']
                 
                 # checking if any concurrent increases of power level of the same user
                 for pred in current_op['preds']:
                     immediate_succs = [ops_by_hash[succ_hash] for succ_hash in successors[pred]]
                     for succ in immediate_succs:
                         if succ['type'] == 'increase_pl' and succ['increased_key'] == key:
-                            if is_valid_pl_increase(succ, succ['power_level'], preds, successors, ops_by_hash):
+                            if is_valid_pl_increase(succ, succ['power_level'], preds, predecessors, successors, ops_by_hash):
                                 # if so, we update to the LOWEST power level ## TODO: check met Jolien Swift, ik dacht gwn om safe te spelen
                                 # OF GROOTSTE AUTORITIET
                                 # OF HASH ALS TIGHT-BREAK
+                                print("-----")
+                                print(succ)
+                                print("-----")
                                 if succ['power_level'] < power_level:
                                     power_level = succ['power_level']
                                 
@@ -382,6 +403,8 @@ class TestAccessControlList(unittest.TestCase):
     private = {name: SigningKey.generate() for name in {'alice', 'bob', 'carol', 'dave'}}
     public = {name: key.verify_key.encode().hex() for name, key in private.items()}
     friendly_name = {public_key: name for name, public_key in public.items()}
+        
+    
 
     def test_add_remove(self):
         # Make some example ops
@@ -516,26 +539,21 @@ class TestAccessControlList(unittest.TestCase):
         
     
     # ADDED FOR EXERCISE 3
-    def test_valid_power_increase_moderator(self):
+    def test_valid_power_increase_administrator(self):
         
         create = create_op(self.private['alice'])
         add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
         
-        increase_pl = increase_pl_op(self.private['alice'], PowerLevels.MODERATOR.value, self.public['bob'], [hex_hash(add_b)])
+        increase_pl = increase_pl_op(self.private['alice'], PowerLevels.ADMINISTRATOR.value, self.public['bob'], [hex_hash(add_b)])
         
-        members, valid_messages, power_levels = interpret_ops({create, add_b, increase_pl})
+        _, _, power_levels = interpret_ops({create, add_b, increase_pl})
         
         print([(self.friendly_name[member], power_level) for (member, power_level) in power_levels])
         
-        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, {('alice', 100), ('bob', 0)})
+        self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, {('alice', 100), ('bob', 100)})   
         
         
         
-        
-        
-              
-            
-    
     def test_failure_1(self):
         with self.assertRaises(Exception):
             # adding without creating
