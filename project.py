@@ -3,7 +3,7 @@ import secrets
 import unittest
 from hashlib import sha256
 from nacl.signing import SigningKey, VerifyKey
-from hypothesis import given, strategies as st
+from hypothesis import given, strategies
 
 # ADDED FOR EXERCISE 3
 from enum import Enum
@@ -769,19 +769,61 @@ class TestAccessControlList(unittest.TestCase):
         self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
                             {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.MODERATOR.value)})             
     
-    ## FOR EXERCISE 1: some small failing test cases (there are other such failing test cases above)         
-    def test_failure_1(self):
-        with self.assertRaises(Exception):
-            # adding without creating
-            create = create_op(self.private['alice'])
-            add_b = add_op(self.private['alice'], self.public('bob'), [])
+    ## ADDED FOR EXERCISE 1: some small failing test cases (there are other such failing test cases above)         
+    def test_no_predecessors(self):
+        """Test that a non-create op without at least one predecessor raises an exception."""
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [])
 
-    def test_failure_2(self):
         with self.assertRaises(Exception):
-            # adding with wrong key
-            create = create_op(self.private['alice'])
-            add_b = add_op(self.private['arman'], self.public['bob'], [hex_hash(create)])
-                            
+            _, _, _ = interpret_ops({create, add_b})
+    
+    def test_missing_added_key(self):
+        """Test that an ad' operation without added_key raises an exception."""
+        create = create_op(self.private['alice'])
+        invalid_add = sign_msg(self.private['alice'], {'type': 'add', 'preds': [hex_hash(create)]})
+        
+        with self.assertRaises(Exception):
+            _, _, _ = interpret_ops({create, invalid_add})
+    
+    ## ADDED EXERCISE 5: using Hypothesis library for property-based testing
+    @given(
+        strategies.sampled_from(['remove', 'post', 'add'])
+    )
+    def test_simple_operations(self, operation):
+        """
+        Minimal test to validate one operation at a time.
+        """
+        create = create_op(self.private['alice'])
+        add_bob = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        ops = [create, add_bob]
+        
+        if operation == 'add':
+            ops.append(add_op(self.private['alice'], self.public['carol'], [hex_hash(add_bob)]))
+        elif operation == 'remove':
+            ops.append(remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_bob)]))
+        elif operation == 'post':
+            ops.append(post_op(self.private['bob'], "Hello", [hex_hash(add_bob)]))
+
+        # interpreting operations
+        members, messages, _ = interpret_ops(set(ops))
+
+        # validating that Alice is always a member
+        self.assertIn(self.public['alice'], members)
+
+        # validating the addition of users
+        if operation == 'add':
+            self.assertIn(self.public['carol'], members)
+        
+        # validating the removal of users
+        if operation == 'remove':
+            self.assertNotIn(self.public['bob'], members)    
+
+        # validating that only members are allowed to post
+        if operation == 'post' and self.public['bob'] in members:
+            self.assertIn("Hello", messages)
+        elif operation == 'post':
+            self.assertNotIn("Hello", messages)                             
               
 
 if __name__ == '__main__':
