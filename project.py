@@ -213,10 +213,7 @@ def interpret_ops(ops):
     and valid messages. Throws an exception if something is not right.
     """
     
-    # to change the value of a global variable inside a function, we need to refer to the variable by using the 'global' keyword
-    # global group_creator_key 
-    
-    # Check all the signatures and parse all the JSON
+    # checking all the signatures and parsing all the JSON
     # creates a dictionary ops_by_hash, where the keys are the 
     # hashes of each operation, and the values are the verified 
     # operation data returned from verify_msg()
@@ -225,7 +222,7 @@ def interpret_ops(ops):
     parsed_ops = ops_by_hash.values()
 
     ## SCHEMA VALIDATION
-    # Every op must be one of the expected types
+    # every op must be one of the expected types
     if any(op['type'] not in {'create', 'add', 'remove', 'post', 'change_pl'} for op in parsed_ops): # UPDATED FOR EXERCISE 2 and 3
         raise Exception('Every op must be either create, add, remove, post, or change_pl')
     
@@ -240,7 +237,7 @@ def interpret_ops(ops):
         raise Exception('Every post operation must have a message')
     
 
-    # Hash graph integrity: every op except the initial creation must reference at least one
+    # hash graph integrity: every op except the initial creation must reference at least one
     # predecessor operation, and all predecessors must exist in the set
     if any(len(op['preds']) == 0 for op in parsed_ops if op['type'] != 'create'):
         raise Exception('Every non-create op must have at least one predecessor')
@@ -263,17 +260,13 @@ def interpret_ops(ops):
             predecessors[hash] = predecessors.get(hash, set()) | {pred} # ADDED FOR EXERCISE 2
 
 
-    # Get the public key of the group creator
+    # getting the public key of the group creator
     create_ops = [(hash, op) for hash, op in ops_by_hash.items() if op['type'] == 'create']
     if len(create_ops) != 1:
         raise Exception('There must be exactly one create operation')
-    
 
-    # Only the group creator may sign add/remove ops (TODO: change this!)
-    # if any(op['signed_by'] != create_op['signed_by'] for op in parsed_ops if op['type'] != 'post'):
-    #    raise Exception('Only the group creator may sign add/remove operations')
 
-    # Current group members are those who have been added, and not removed again by a remove
+    # current group members are those who have been added, and not removed again by a remove
     # operation that is a transitive successor to the add operation.
     members = set()
     for hash, op in ops_by_hash.items():
@@ -287,10 +280,7 @@ def interpret_ops(ops):
                 # 1. the user
                 # 2. the adder (the person that added this user)
                 if not (op['type'] == 'add' and concurrent_removal(op, successors, ops_by_hash)):
-                    
-                    ## ADDED FOR EXERCISE 3: INITIALIZING POWER LEVELS
-                    # if op['type'] == 'create':
-                        #group_creator_key = op['signed_by']
+
                     members.add(added_key)
                     
         if  op['type'] == 'remove':
@@ -315,10 +305,21 @@ def interpret_ops(ops):
             
             # finding all remove operations for the author among the predecessors
             removals = [h for h, pred in preds_by_hash.items() if pred['type'] == 'remove' and pred['removed_key'] == signed_by]
-        
             
             # flag to indicate if any removal of a user is followed by an add of that same user
             removal_without_add = False
+            
+            # finding all immediate successor operations of each predecessor
+            immediate_succ = []
+            for pred in op['preds']:
+                if pred in successors: # should always return true, but put here just in case
+                    immediate_succ.extend(ops_by_hash[succ_hash] for succ_hash in successors[pred])
+
+            # checking if any of the immediate successors is a 'remove' operation for the same signed_by
+            concurrent_user_removals = any(
+                other_op['type'] == 'remove' and other_op['removed_key'] == signed_by
+                for other_op in immediate_succ
+            )
             
             # checking each removal to see if it is followed by an 'add' operation for the same key
             for removal_hash in removals:
@@ -336,7 +337,7 @@ def interpret_ops(ops):
                     break  # no need to continue checking once we have found a valid removal without a subsequent add
 
             # if no removal (without a subsequent add) was found, we add the message to the valid messages
-            if not removal_without_add:
+            if (not removal_without_add) and (not concurrent_user_removals):
                 messages.add(op['message'])
     
     power_levels = [(member, (search_power_level(member, [create_ops[0][0]], predecessors, successors, ops_by_hash, True))) for member in members]            
@@ -620,7 +621,6 @@ class TestAccessControlList(unittest.TestCase):
         # asserting that the power level of Bob is the one set by the person with the highest authority (namely Alice)
         self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
                          {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.ADMINISTRATOR.value), ('carol', PowerLevels.MODERATOR.value)})
-    
     
     # ADDED FOR EXERCISE 3
     def test_latest_power_level_in_result(self):
