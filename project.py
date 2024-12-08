@@ -3,6 +3,7 @@ import secrets
 import unittest
 from hashlib import sha256
 from nacl.signing import SigningKey, VerifyKey
+from hypothesis import given, strategies as st
 
 # ADDED FOR EXERCISE 3
 from enum import Enum
@@ -300,15 +301,6 @@ def interpret_ops(ops):
         if op['type'] == 'post':
             signed_by = op['signed_by']
             
-            # getting all predecessors of the post operation
-            preds_by_hash = {pred : ops_by_hash[pred] for pred in transitive_preds(predecessors, hash)}
-            
-            # finding all remove operations for the author among the predecessors
-            removals = [h for h, pred in preds_by_hash.items() if pred['type'] == 'remove' and pred['removed_key'] == signed_by]
-            
-            # flag to indicate if any removal of a user is followed by an add of that same user
-            removal_without_add = False
-            
             # finding all immediate successor operations of each predecessor
             immediate_succ = []
             for pred in op['preds']:
@@ -320,6 +312,21 @@ def interpret_ops(ops):
                 other_op['type'] == 'remove' and other_op['removed_key'] == signed_by
                 for other_op in immediate_succ
             )
+            
+            # getting all predecessors of the post operation
+            preds_by_hash = {pred : ops_by_hash[pred] for pred in transitive_preds(predecessors, hash)}
+            
+            # check if the user has been added at least once
+            user_added = any(
+                pred['type'] == 'add' and pred['added_key'] == signed_by
+                for pred in preds_by_hash.values()
+            )
+            
+            # finding all remove operations for the author among the predecessors
+            removals = [h for h, pred in preds_by_hash.items() if pred['type'] == 'remove' and pred['removed_key'] == signed_by]
+            
+            # flag to indicate if each removal of a user is followed by an add of that same user
+            removal_without_add = False
             
             # checking each removal to see if it is followed by an 'add' operation for the same key
             for removal_hash in removals:
@@ -337,7 +344,7 @@ def interpret_ops(ops):
                     break  # no need to continue checking once we have found a valid removal without a subsequent add
 
             # if no removal (without a subsequent add) was found, we add the message to the valid messages
-            if (not removal_without_add) and (not concurrent_user_removals):
+            if user_added and (not removal_without_add) and (not concurrent_user_removals):
                 messages.add(op['message'])
     
     power_levels = [(member, (search_power_level(member, [create_ops[0][0]], predecessors, successors, ops_by_hash, True))) for member in members]            
@@ -761,7 +768,8 @@ class TestAccessControlList(unittest.TestCase):
         # asserting that carol is removed       
         self.assertEqual({(self.friendly_name[member], power_level) for (member, power_level) in power_levels}, 
                             {('alice', PowerLevels.ADMINISTRATOR.value), ('bob', PowerLevels.MODERATOR.value)})             
-                 
+    
+    ## FOR EXERCISE 1: some small failing test cases (there are other such failing test cases above)         
     def test_failure_1(self):
         with self.assertRaises(Exception):
             # adding without creating
@@ -772,7 +780,8 @@ class TestAccessControlList(unittest.TestCase):
         with self.assertRaises(Exception):
             # adding with wrong key
             create = create_op(self.private['alice'])
-            add_b = add_op(self.private['arman'], self.public['bob'], [hex_hash(create)])                     
+            add_b = add_op(self.private['arman'], self.public['bob'], [hex_hash(create)])
+                            
               
 
 if __name__ == '__main__':
