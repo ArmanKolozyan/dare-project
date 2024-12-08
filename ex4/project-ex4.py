@@ -466,6 +466,17 @@ class TestAccessControlList(unittest.TestCase):
 
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
         self.assertEqual(valid_messages, set())  # no valid messages       
+
+    def test_create_twice(self):
+        with self.assertRaises(Exception):
+            create1 = create_op(self.private['alice'])
+            create2 = create_op(self.private['bob'])
+            interpret_ops({create1, create2})
+
+    def test_no_create(self):
+        with self.assertRaises(Exception):
+            add_b = add_op(self.private['alice'], self.public['bob'])
+            interpret_ops({ add_b })
     
  
 if __name__ == '__main__':
