@@ -132,42 +132,37 @@ def is_valid_pl_change(op, new_pl, preds, predecessors, successors, ops_by_hash)
     return (signer_pl >= new_pl and new_pl <= signer_pl)   
 
 ## ADDED FOR EXERCISE 3
-def search_power_level(key, preds, predecessors, successors, ops_by_hash):
+def search_power_level(key, currents, predecessors, successors, ops_by_hash, traverse_successors = False):
     """
-    Finds the most recent power_level of a user, starting from a given set of predecessors (preds).
+    Finds the power level of a user, starting from a given set of operations.
     
     Parameters:
         key: The public key of the user.
-        preds: The list of direct predecessor operations to start searching from.
+        currents: The list of starting operations to traverse.
+        predecessors: Dictionary mapping operation hashes to their predecessor hashes.
+        successors: Dictionary mapping operation hashes to their successor hashes.
+        ops_by_hash: Dictionary mapping operation hashes to their corresponding operations.
+        traverse_successors: If True, traverse successors; otherwise, traverse predecessors.
         
     Returns:
-        The most recent power level of the user if found, or -100 if no power level change is found.
+        The power level of the user.
     """
-        
-    # the creator of the group has Administrator rights, no checking needed
-    # if key == group_creator_key:
-    #     return PowerLevels.ADMINISTRATOR.value
-    
-    currents = list(preds)  # starting with the given predecessors
-    # ^ we convert to a list to have order between predecessors
     
     power_level = PowerLevels.USER.value  # default power level if no updates are found
+    
+    currents = list(currents)
 
     while currents:
-        current = currents.pop(0)  # getting the first item (most recent one to explore)
-        
+        current = currents.pop(0)  # getting the most recent operation to explore
         current_op = ops_by_hash[current]
-                
+
         # checking if this operation is a 'power_level' change for the given user
         if current_op['type'] == 'change_pl' and current_op['changed_key'] == key:
-            
-            # checking if valid
+            # validating the current power level change
             if is_valid_pl_change(current_op, current_op['power_level'], predecessors[current], predecessors, successors, ops_by_hash):
-                
-                if power_level < current_op['power_level']:
-                    power_level = current_op['power_level']
-                
-                # checking if any concurrent changes of power level of the same user
+                power_level = current_op['power_level']
+
+                # checking for concurrent power level changes
                 for pred in current_op['preds']:
                     immediate_succs = [
                         (succ_hash, ops_by_hash[succ_hash])
@@ -177,16 +172,13 @@ def search_power_level(key, preds, predecessors, successors, ops_by_hash):
                     for (succ_hash, succ) in immediate_succs:
                         if succ['type'] == 'change_pl' and succ['changed_key'] == key:
                             if is_valid_pl_change(succ, succ['power_level'], predecessors[succ_hash], predecessors, successors, ops_by_hash):
-                                # if so, we update to the LOWEST power level
-                            
-                                # authority of the signer of the concurrent operation
+                                # taking the authorities of the operation signers into account
                                 concurrent_signer_key = succ['signed_by']
-                                concurrent_signer_pl = search_power_level(concurrent_signer_key, predecessors[succ_hash], predecessors, successors, ops_by_hash)
+                                concurrent_signer_pl = search_power_level(concurrent_signer_key, [succ_hash], predecessors, successors, ops_by_hash)
 
-                                # authority of the current operation's signer
                                 current_signer_key = current_op['signed_by']
-                                current_signer_pl = search_power_level(current_signer_key, predecessors[current], predecessors, successors, ops_by_hash)
-                                
+                                current_signer_pl = search_power_level(current_signer_key, [current], predecessors, successors, ops_by_hash)
+
                                 # comparing the authorities to decide which power level to apply
                                 if concurrent_signer_pl > current_signer_pl:
                                     power_level = succ['power_level']
@@ -194,83 +186,26 @@ def search_power_level(key, preds, predecessors, successors, ops_by_hash):
                                     power_level = current_op['power_level']
                                 elif concurrent_signer_pl == current_signer_pl:
                                     # if authority is the same, we apply the lower power level
-                                    power_level = min(power_level, succ['power_level'])
-                
-                break  # we exit early as we've found the most recent power level
-        
-        if current_op['type'] == 'create' and current_op['signed_by'] == key:
-            power_level = PowerLevels.ADMINISTRATOR.value
-            break
-        
-        # adding the transitivbe predecessors to be checked next
-        currents.extend(current_op.get('preds', []))
-    
-    return power_level
-
-
-def search_power_level_succ(key, nexts, preds, predecessors, successors, ops_by_hash):
-        
-    # the creator of the group has Administrator rights, no checking needed
-    # if key == group_creator_key:
-    #     return PowerLevels.ADMINISTRATOR.value
-    
-    currents = nexts  # starting with the given nexts
-    # ^ we convert to a list to have order between predecessors
-    
-    power_level = PowerLevels.USER.value  # default power level if no updates are found
-
-    
-    while currents:
-        current = currents.pop(0)  # getting the first item (most recent one to explore)
-        
-        current_op = ops_by_hash[current]
-        
-        # checking if this operation is a 'power_level' change for the given user
-        if current_op['type'] == 'change_pl' and current_op['changed_key'] == key:
-            
-            # checking if valid
-            if is_valid_pl_change(current_op, current_op['power_level'], predecessors[current], predecessors, successors, ops_by_hash):
-                
-                power_level = current_op['power_level']
-                
-                # checking if any concurrent changes of power level of the same user
-                for pred in current_op['preds']:
-                    immediate_succs = [
-                        (succ_hash, ops_by_hash[succ_hash])
-                        for succ_hash in successors[pred]
-                        if succ_hash != current
-                    ]
-                    for (succ_hash, succ) in immediate_succs:
-                        if succ['type'] == 'change_pl' and succ['changed_key'] == key:
-                            if is_valid_pl_change(succ, succ['power_level'], predecessors[succ_hash], predecessors, successors, ops_by_hash):
-                                # if so, we update to the LOWEST power level
-                            
-                                
-                                # authority of the signer of the concurrent operation
-                                concurrent_signer_key = succ['signed_by']
-                                concurrent_signer_pl = search_power_level(concurrent_signer_key, predecessors[succ_hash], predecessors, successors, ops_by_hash)
-
-                                # authority of the current operation's signer
-                                current_signer_key = current_op['signed_by']
-                                current_signer_pl = search_power_level(current_signer_key, predecessors[current], predecessors, successors, ops_by_hash)
-                                
-                                # comparing the authorities to decide which power level to apply
-                                if concurrent_signer_pl > current_signer_pl:
-                                    power_level = succ['power_level']
-                                elif concurrent_signer_pl < current_signer_pl:
-                                    power_level = current_op['power_level']    
-                                elif concurrent_signer_pl == current_signer_pl:
-                                    # if authority is the same, we apply the lower power level
                                     power_level = min(current_op['power_level'], succ['power_level'])
 
+                # exitting early if not traversing successors (because then we need the most recent power level)
+                if not traverse_successors:
+                    return power_level
+
+        # speciale case: group creator always has ADMINISTRATOR rights
         if current_op['type'] == 'create' and current_op['signed_by'] == key:
             power_level = PowerLevels.ADMINISTRATOR.value
-            break
-        
-        # adding the transitivbe predecessors to be checked next      
-        currents.extend(successors.get(current, []))
-    
-    return power_level        
+            if not traverse_successors:
+                return power_level
+
+        # traversing the graph based on the flag
+        if traverse_successors:
+            currents.extend(successors.get(current, []))
+        else:
+            currents.extend(current_op.get("preds", []))
+
+    return power_level
+     
 
 def interpret_ops(ops):
     """
@@ -404,7 +339,7 @@ def interpret_ops(ops):
             if not removal_without_add:
                 messages.add(op['message'])
     
-    power_levels = [(member, (search_power_level_succ(member, [create_ops[0][0]], [], predecessors, successors, ops_by_hash))) for member in members]            
+    power_levels = [(member, (search_power_level(member, [create_ops[0][0]], predecessors, successors, ops_by_hash, True))) for member in members]            
     return (members, messages, power_levels)
 
 
@@ -467,7 +402,7 @@ class TestAccessControlList(unittest.TestCase):
         post_by_bob = post_op(self.private['bob'], "Hello, I am Bob", [hex_hash(add_b)])
 
         # Alice removes Bob after the post
-        rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+        rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(post_by_bob)])
 
         # computing group membership and valid posts
         members, valid_messages, _ = interpret_ops({create, add_b, post_by_bob, rem_b})
