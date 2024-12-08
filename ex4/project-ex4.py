@@ -260,12 +260,14 @@ def precedes(ops_by_hash, op1_hash, op2):
     return op1_hash in predecessors or any([precedes(ops_by_hash, op1_hash, ops_by_hash[predecessor]) for predecessor in predecessors])
 
 class TestAccessControlList(unittest.TestCase):
+
     # Generate keys for all the participants
     private = {name: SigningKey.generate() for name in {'alice', 'bob', 'carol', 'dave'}}
     public = {name: key.verify_key.encode().hex() for name, key in private.items()}
     friendly_name = {public_key: name for name, public_key in public.items()}
 
     def test_add_remove(self):
+
         # Alice creates the group, adds Bob, and concurrently adds Carol, after both Alice removes Bob
         create = create_op(self.private['alice'])
         add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
@@ -275,10 +277,13 @@ class TestAccessControlList(unittest.TestCase):
         # Compute group membership
         interpretation_results = interpret_ops({create, add_b, add_c, rem_b})
         members = interpretation_results['members']
+        valid_messages = interpretation_results['valid_messages']
 
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'carol'})
+        self.assertEqual(valid_messages, set()) # no valid messages
 
     def test_paper_figure_2(self):
+
         # Alice creates the group, adds Bob and Carol one after the other, concurrently with the addition of Carol, Bob adds Dave
         create = create_op(self.private['alice'])
         add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
@@ -288,10 +293,13 @@ class TestAccessControlList(unittest.TestCase):
         # Compute group membership
         interpretation_results = interpret_ops({create, add_b, add_c, add_d})
         members = interpretation_results['members']
+        valid_messages = interpretation_results['valid_messages']
 
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob', 'carol', 'dave'})
+        self.assertEqual(valid_messages, set()) # no valid messages
 
     def test_paper_figure_3(self):
+
         # Alice creates the group, adds Bob, then removes Bob, and concurrently with the removal of Bob, bob adds Carol. 
         create = create_op(self.private['alice'])
         add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
@@ -301,10 +309,13 @@ class TestAccessControlList(unittest.TestCase):
         # Compute group membership
         interpretation_results = interpret_ops({create, add_b, remove_b, add_c})
         members = interpretation_results['members']
+        valid_messages = interpretation_results['valid_messages']
 
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
+        self.assertEqual(valid_messages, set()) # no valid messages
 
     def test_paper_figure_4(self):
+
         # Alice creates the group, adds Bob, then Bob adds Carol, afterwards Alice removes Bob
         create = create_op(self.private['alice'])
         add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
@@ -314,10 +325,13 @@ class TestAccessControlList(unittest.TestCase):
         # Compute group membership
         interpretation_results = interpret_ops({create, add_b, remove_b, add_c})
         members = interpretation_results['members']
+        valid_messages = interpretation_results['valid_messages']
 
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'carol'})
+        self.assertEqual(valid_messages, set()) # no valid messages
 
     def test_paper_figure_6(self):
+
         # cycle in the authority graph!
         # Alice creates the group, adds Bob, afterwards removes Bob. 
         # Concurrently with the removal of Bob, Bob adds Carrol - and after the addition of Carol, she removes Alice
@@ -330,10 +344,13 @@ class TestAccessControlList(unittest.TestCase):
         # Compute group membership
         interpretation_results = interpret_ops({create, add_b, remove_b, add_c, remove_a})
         members = interpretation_results['members']
+        valid_messages = interpretation_results['valid_messages']
 
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
+        self.assertEqual(valid_messages, set()) # no valid messages
 
     def test_mutual_removal(self):
+
         # Alice creates the group, she adds Bob, then Bob and Alice concurrently remove each other.  
         create = create_op(self.private['alice'])
         add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
@@ -343,8 +360,10 @@ class TestAccessControlList(unittest.TestCase):
         # Compute group membership
         interpretation_results = interpret_ops({create, add_b, remove_b, remove_a})
         members = interpretation_results['members']
+        valid_messages = interpretation_results['valid_messages']
 
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
+        self.assertEqual(valid_messages, set()) # no valid messages
 
     def test_mutual_removal_2(self):
         # to test the depth looks at the first add
@@ -360,15 +379,14 @@ class TestAccessControlList(unittest.TestCase):
         # Compute group membership  
         interpretation_results = interpret_ops({create, add_b, remove_b, remove_a1, add_a, remove_a2})
         members = interpretation_results['members']
+        valid_messages = interpretation_results['valid_messages']
 
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
-
-
+        self.assertEqual(valid_messages, set()) # no valid messages
 
     def test_post_then_remove(self):
-        """Test that a post made before removal remains valid"""
       
-        # creating group, adding Bob. After Bob posts a valid message, Alice removes Bob 
+        # Alice creates the group, then adds Bob. After Bob posts a valid message, Alice removes Bob 
         create = create_op(self.private['alice'])
         add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
         post_b = post_op(self.private['bob'], "This is Bob", [hex_hash(add_b)])
@@ -380,7 +398,75 @@ class TestAccessControlList(unittest.TestCase):
         valid_messages = interpretation_results['valid_messages']
 
         self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
-        self.assertEqual(valid_messages, {"This is Bob"})  # Bob's post should still be valid
+        self.assertEqual(valid_messages, {"This is Bob"})  # message still valid
+
+    def test_remove_then_post(self):
+
+        # Alice creates the group and adds Bob, then removes Bob. Afterwards, Bob posts a message
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+        post_b = post_op(self.private['bob'], "This is Bob", [hex_hash(rem_b)])
+
+        # Compute group membership + valid posts
+        interpretation_results = interpret_ops({create, add_b, rem_b, post_b})
+        members = interpretation_results['members']
+        valid_messages = interpretation_results['valid_messages']
+
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
+        self.assertEqual(valid_messages, set())  # no valid messages
+        
+    def test_remove_add_then_post(self):
+        
+        # Alice creates the group and adds Bob, then removes Bob, then adds Bob again. After this, Bob posts a message
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+        add_b2 = add_op(self.private['alice'], self.public['bob'], [hex_hash(rem_b)])
+        post_b = post_op(self.private['bob'], "This is Bob", [hex_hash(add_b2)])
+
+        # Compute group membership  + valid posts
+        interpretation_results = interpret_ops({create, add_b, rem_b, add_b2, post_b})
+        members = interpretation_results['members']
+        valid_messages = interpretation_results['valid_messages']
+
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob'})
+        self.assertEqual(valid_messages, {"This is Bob"})  # message still valid
+        
+        
+    def test_remove_post_then_add(self):
+        
+        # Alice creates the group and adds Bob, then removes Bob, then Bob posts a message. After this, Alice adds Bob again
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+        post_b = post_op(self.private['bob'], "This is Bob", [hex_hash(rem_b)])
+        add_b2 = add_op(self.private['alice'], self.public['bob'], [hex_hash(post_b)])
+
+        # Compute group membership  + valid posts
+        interpretation_results = interpret_ops({create, add_b, rem_b, add_b2, post_b})
+        members = interpretation_results['members']
+        valid_messages = interpretation_results['valid_messages']
+
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice', 'bob'})
+        self.assertEqual(valid_messages, set())  # no valid messages
+
+    def test_concurrent_remove_post(self):
+
+        # Alice creates the group and adds Bob, then removes Bob, concurrently Bob posts a message
+        create = create_op(self.private['alice'])
+        add_b = add_op(self.private['alice'], self.public['bob'], [hex_hash(create)])
+        rem_b = remove_op(self.private['alice'], self.public['bob'], [hex_hash(add_b)])
+        post_b = post_op(self.private['bob'], "This is Bob", [hex_hash(add_b)])
+
+        # Compute group membership  + valid posts
+        interpretation_results = interpret_ops({create, add_b, rem_b, post_b})
+        members = interpretation_results['members']
+        valid_messages = interpretation_results['valid_messages']
+
+        self.assertEqual({self.friendly_name[member] for member in members}, {'alice'})
+        self.assertEqual(valid_messages, set())  # no valid messages       
+    
  
 if __name__ == '__main__':
     unittest.main()
