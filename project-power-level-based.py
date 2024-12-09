@@ -776,17 +776,17 @@ class TestAccessControlList(unittest.TestCase):
         add_b = add_op(self.private['alice'], self.public['bob'], [])
 
         with self.assertRaises(Exception):
-            _, _, _ = interpret_ops({create, add_b})
+            interpret_ops({create, add_b})
     
     def test_missing_added_key(self):
-        """Test that an ad' operation without added_key raises an exception."""
+        """Test that an add operation without added_key raises an exception."""
         create = create_op(self.private['alice'])
         invalid_add = sign_msg(self.private['alice'], {'type': 'add', 'preds': [hex_hash(create)]})
         
         with self.assertRaises(Exception):
-            _, _, _ = interpret_ops({create, invalid_add})
+            interpret_ops({create, invalid_add})
     
-    ## ADDED EXERCISE 5: using Hypothesis library for property-based testing
+    ## ADDED FOR EXERCISE 5: using Hypothesis library for property-based testing
     @given(
         strategies.sampled_from(['remove', 'post', 'add'])
     )
